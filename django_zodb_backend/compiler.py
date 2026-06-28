@@ -282,7 +282,11 @@ class SQLCompiler(ZODBMixin, compiler.SQLCompiler):
             fields = meta.concrete_fields
             if not getattr(self, "select", None):
                 # Build minimal 3-tuples matching the format from get_select().
-                self.select = [(f.col, (f"t.{f.column}", ()), None) for f in fields]
+                # Use Col() directly rather than f.col — some field types
+                # (e.g. BigAutoField) may not have the cached_property set yet.
+                from django.db.models.expressions import Col
+
+                self.select = [(Col(meta.db_table, f), (f"t.{f.column}", ()), None) for f in fields]
             self.klass_info = {
                 "model": self.query.model,
                 "select_fields": list(range(len(fields))),

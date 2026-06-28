@@ -90,6 +90,24 @@ class Cursor:
 
         raise NotSupportedError("ZODB does not support cursor.callproc().")
 
+    # DB-API fetch methods — return empty results since we never issue real SQL.
+    def fetchone(self):
+        return None
+
+    def fetchmany(self, size=None):
+        return []
+
+    def fetchall(self):
+        return []
+
+    @property
+    def rowcount(self):
+        return -1
+
+    @property
+    def description(self):
+        return None
+
 
 # Per-alias ZODB DB objects, shared across threads (ZODB connections are
 # opened per-thread from the shared DB).

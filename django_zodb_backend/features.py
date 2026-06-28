@@ -172,6 +172,11 @@ class DatabaseFeatures(BaseDatabaseFeatures):
         # assertNumQueries() counts cursor.execute() calls, which is always 0
         # for ZODB since no SQL is emitted.
         "assertNumQueries counts SQL cursor calls; ZODB emits none.": {
+            "admin_utils.test_logentry.LogEntryTests.test_log_actions",
+            "admin_utils.tests.NestedObjectsTests.test_on_delete_do_nothing",
+            "admin_utils.tests.NestedObjectsTests.test_queries",
+            "auth_tests.test_management.CreatePermissionsMultipleDatabasesTests.test_set_permissions_fk_to_using_parameter",
+            "auth_tests.test_middleware.TestLoginRequiredMiddleware.test_protected_view_logged_in_performance",
             "basic.tests.ModelInstanceCreationTests.test_save_parent_primary_with_default",
             "basic.tests.ModelInstanceCreationTests.test_save_primary_with_default",
             "basic.tests.ModelInstanceCreationTests.test_save_primary_with_default_force_update",
@@ -180,6 +185,47 @@ class DatabaseFeatures(BaseDatabaseFeatures):
             "basic.tests.ModelTest.test_save_expressions",
             "defer_regress.tests.DeferRegressionTest.test_basic",
             "defer_regress.tests.DeferRegressionTest.test_resolve_columns",
+            "generic_views.test_dates.ArchiveIndexViewTests.test_no_duplicate_query",
+            "generic_views.test_dates.ArchiveIndexViewTests.test_paginated_archive_view_does_not_load_entire_table",
+            "generic_views.test_dates.DateDetailViewTests.test_get_object_custom_queryset_numqueries",
+            "generic_views.test_dates.YearArchiveViewTests.test_no_duplicate_query",
+            "generic_views.test_list.ListViewTests.test_paginated_list_view_does_not_load_entire_table",
+            "model_formsets_regress.tests.FormsetTests.test_extraneous_query_is_not_run",
+            "modeladmin.tests.ModelAdminTests.test_log_deletions",
+            "queryset_pickle.tests.PickleabilityTestCase.test_pickle_prefetch_queryset_usable_outside_of_prefetch",
+            "select_related_onetoone.tests.ReverseSelectRelatedTestCase.test_nullable_relation",
+            "select_related_onetoone.tests.ReverseSelectRelatedTestCase.test_parent_only",
+            "test_utils.tests.AssertNumQueriesContextManagerTests",
+            "test_utils.tests.AssertNumQueriesTests.test_assert_num_queries_with_client",
+            "test_utils.tests.AssertNumQueriesUponConnectionTests.test_ignores_connection_configuration_queries",
+        },
+        # ── cursor.fetchone() used directly ───────────────────────────────────
+        "Test calls cursor.fetchone() expecting a SQL result row.": {
+            "test_utils.tests.AllowedDatabaseQueriesTests.test_allowed_database_copy_queries",
+        },
+        # ── REMOTE_USER authentication ────────────────────────────────────────
+        "RemoteUserBackend tests rely on HTTP_REMOTE_USER header session state.": {
+            "auth_tests.test_remote_user.AllowAllUsersRemoteUserBackendTest.test_header_disappears",
+            "auth_tests.test_remote_user.AllowAllUsersRemoteUserBackendTest.test_header_disappears_async",
+            "auth_tests.test_remote_user.CustomHeaderRemoteUserTest.test_header_disappears",
+            "auth_tests.test_remote_user.CustomHeaderRemoteUserTest.test_header_disappears_async",
+            "auth_tests.test_remote_user.RemoteUserCustomTest.test_header_disappears",
+            "auth_tests.test_remote_user.RemoteUserCustomTest.test_header_disappears_async",
+            "auth_tests.test_remote_user.RemoteUserNoCreateTest.test_header_disappears",
+            "auth_tests.test_remote_user.RemoteUserNoCreateTest.test_header_disappears_async",
+            "auth_tests.test_remote_user.RemoteUserTest.test_header_disappears",
+            "auth_tests.test_remote_user.RemoteUserTest.test_header_disappears_async",
+        },
+        # ── Date ordering returns None (date fields stored as Python objects) ─
+        "Date ordering with None values not yet supported.": {
+            "generic_views.test_dates.ArchiveIndexViewTests.test_date_list_order",
+            "generic_views.test_dates.MonthArchiveViewTests.test_date_list_order",
+            "generic_views.test_dates.YearArchiveViewTests.test_date_list_order",
+        },
+        # ── select_related validation (BigAutoField.col) ──────────────────────
+        "select_related field validation inspects Col internals not yet supported.": {
+            "select_related_onetoone.tests.ReverseSelectRelatedValidationTests.test_reverse_related_validation",
+            "select_related_onetoone.tests.ReverseSelectRelatedValidationTests.test_reverse_related_validation_with_filtered_relation",
         },
         # ── Window functions ──────────────────────────────────────────────────
         "ZODB does not support window functions.": {
