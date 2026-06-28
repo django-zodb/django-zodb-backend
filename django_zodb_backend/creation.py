@@ -30,6 +30,8 @@ class DatabaseCreation(BaseDatabaseCreation):
         test_db_name = self._create_test_db(verbosity, autoclobber, keepdb)
         self.connection.settings_dict["NAME"] = test_db_name
         self.connection.ensure_connection()
+        # Apply django_test_skips and django_test_expected_failures from features.
+        self.mark_expected_failures_and_skips()
         return test_db_name
 
     def destroy_test_db(self, old_database_name=None, verbosity=1, keepdb=False, suffix=None):
