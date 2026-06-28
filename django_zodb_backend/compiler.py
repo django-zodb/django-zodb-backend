@@ -237,6 +237,23 @@ class ZODBMixin:
             # Subquery or expression — not supported in this POC.
             return True
 
+        # Convert the RHS to the DB storage representation so it matches the
+        # values written by our INSERT compiler (which uses get_db_prep_save).
+        # For example, UUIDField stores hex strings; if rhs is a uuid.UUID
+        # object the comparison would fail without this conversion.
+        try:
+            output_field = getattr(lookup.lhs, "output_field", None)
+            if output_field is not None and rhs is not None:
+                if isinstance(rhs, (list, tuple)):
+                    rhs = type(rhs)(
+                        output_field.get_db_prep_value(v, self.connection, prepared=False)
+                        for v in rhs
+                    )
+                else:
+                    rhs = output_field.get_db_prep_value(rhs, self.connection, prepared=False)
+        except Exception:
+            pass
+
         # Dispatch using isinstance so subclasses (e.g. IntegerFieldExact,
         # UUIDExact) are handled by the correct branch.  The order matters:
         # more specific classes must come before their parents.
@@ -389,6 +406,15 @@ class SQLCompiler(ZODBMixin, compiler.SQLCompiler):
             }
         if not hasattr(self, "annotation_col_map") or self.annotation_col_map is None:
             self.annotation_col_map = {}
+
+        # Strip related_klass_infos so that select_related() preloading is
+        # disabled.  Our backend returns None for all "joined" columns (we
+        # don't implement SQL JOINs), which causes ModelIterable to mark
+        # related objects as non-existent.  By removing the related info,
+        # Django falls back to lazy loading (a separate query per access),
+        # which works correctly against our BTree backend.
+        if getattr(self, "klass_info", None) and "related_klass_infos" in self.klass_info:
+            self.klass_info["related_klass_infos"] = []
 
     def _select_columns(self):
         """
