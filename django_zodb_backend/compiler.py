@@ -413,6 +413,14 @@ class SQLCompiler(ZODBMixin, compiler.SQLCompiler):
     def execute_sql(self, result_type=compiler.MULTI, chunked_fetch=False, chunk_size=2000):
         from django.db.models.sql.constants import CURSOR, NO_RESULTS, SINGLE
 
+        # Short-circuit for empty querysets (e.g. QuerySet.none(), EmptyManager)
+        # without opening a ZODB connection — important for SimpleTestCase which
+        # forbids DB access from threads (async queryset methods run in threads).
+        if self.query.is_empty():
+            if result_type == SINGLE:
+                return None
+            return iter([])
+
         # Django's get_aggregation() "else" path routes aggregate queries through
         # SQLCompiler with annotation_select containing Aggregate expressions and
         # default_cols=False/select=(). Detect and handle this case directly.
@@ -532,6 +540,9 @@ class SQLDeleteCompiler(ZODBMixin, compiler.SQLDeleteCompiler):
     def execute_sql(self, result_type=compiler.MULTI):
         import transaction as txn
 
+        if self.query.is_empty():
+            return 0
+
         coll = self._get_btree()
         if coll is None:
             return
@@ -584,6 +595,9 @@ class SQLAggregateCompiler(ZODBMixin, compiler.SQLAggregateCompiler):
         # For simple COUNT(*), delegate to the base compiler's get_count logic.
         # Full aggregation support (SUM, AVG, etc.) is future work.
         from django.db.models import Count
+
+        if self.query.is_empty():
+            return tuple(0 for _ in self.query.annotation_select)
 
         coll = self._get_btree()
         if coll is None:
