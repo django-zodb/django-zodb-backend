@@ -45,6 +45,62 @@ class ZODBMixin:
             return None
         return self.connection.get_btree(meta.db_table)
 
+    def _get_btree_for_table(self, table_name):
+        """Return the OOBTree for any table by name, or None if unavailable."""
+        return self.connection.get_btree(table_name)
+
+    def _resolve_joined_col(self, row, target_alias, col_name):
+        """
+        Resolve a column that lives in a JOINed table rather than the main
+        query table.  Returns a (possibly empty) list of all values for
+        ``col_name`` reachable from the current ``row`` by following the
+        join-chain recorded in ``self.query.alias_map``.
+
+        For example, for ``Permission.objects.filter(user=user_obj)`` the
+        main table is ``auth_permission`` and the WHERE references
+        ``auth_user_user_permissions.user_id``.  We look up the M2M through-
+        table in the ZODB store and return the user_ids linked to the
+        permission in ``row``.
+        """
+        alias_map = getattr(self.query, "alias_map", {})
+        main_table = self.query.get_meta().db_table
+
+        if target_alias == main_table:
+            return [row.get(col_name)]
+
+        # Build the join path from main_table to target_alias by walking
+        # parent_alias links backwards.
+        path = []
+        alias = target_alias
+        visited = set()
+        while alias and alias != main_table:
+            if alias in visited or alias not in alias_map:
+                return []  # Cycle or unknown alias — give up.
+            visited.add(alias)
+            join = alias_map[alias]
+            path.insert(0, join)
+            alias = join.parent_alias
+
+        # Walk the path, expanding each join.
+        current_rows = [row]
+        for join in path:
+            rhs_btree = self._get_btree_for_table(join.table_name)
+            if rhs_btree is None:
+                return []
+            next_rows = []
+            for current_row in current_rows:
+                for rhs_obj in rhs_btree.values():
+                    rhs_dict = self._obj_to_dict(rhs_obj)
+                    # join.join_cols = [(parent_col, child_col)]
+                    if all(
+                        rhs_dict.get(rhs_col) == current_row.get(lhs_col)
+                        for lhs_col, rhs_col in join.join_cols
+                    ):
+                        next_rows.append(rhs_dict)
+            current_rows = next_rows
+
+        return [r.get(col_name) for r in current_rows]
+
     def _row_matches_where(self, obj_dict, where_node):
         """
         Evaluate a WhereNode against an object represented as a plain dict.
@@ -194,24 +250,31 @@ class ZODBMixin:
             StartsWith,
         )
 
-        # Resolve the LHS column name.
+        # Resolve the LHS column name and the source Col expression.
         lhs = lookup.lhs
+        col_obj = None  # The Col expression (for join resolution)
+        col_table_alias = None  # The table alias the column belongs to
         if hasattr(lhs, "output_field"):
             # Col or transform
-            col_name = getattr(lhs, "target", None)
-            if col_name is not None:
-                col_name = col_name.column
+            target = getattr(lhs, "target", None)
+            if target is not None:
+                col_name = target.column
+                col_obj = lhs
+                col_table_alias = getattr(lhs, "alias", None)
             elif hasattr(lhs, "lhs"):
                 # Transform or annotation expression — drill down to the Col.
                 inner = lhs
                 while hasattr(inner, "lhs") and not isinstance(inner, Col):
                     inner = inner.lhs
-                col_name = getattr(getattr(inner, "target", None), "column", None)
+                target = getattr(inner, "target", None)
+                col_name = target.column if target else None
                 if col_name is None:
                     # Might be an F() expression resolved as a source expression.
                     sources = getattr(inner, "source_expressions", None) or []
                     if sources:
                         col_name = getattr(getattr(sources[0], "target", None), "column", None)
+                col_obj = inner if isinstance(inner, Col) else None
+                col_table_alias = getattr(col_obj, "alias", None) if col_obj else None
             else:
                 # Could be an annotation expression (F, Trunc, etc.) with
                 # source_expressions.  Try evaluating it directly.
@@ -226,8 +289,25 @@ class ZODBMixin:
             # Cannot evaluate — treat as matching (conservative).
             return True
 
+        # Determine if this column belongs to a JOINed table.
+        joined_values = None  # non-None when we resolved via join chain
         if col_name != "__EXPR__":
-            obj_value = obj_dict.get(col_name)
+            main_table = None
+            try:
+                main_table = self.query.get_meta().db_table
+            except Exception:
+                pass
+            if (
+                col_table_alias
+                and main_table
+                and col_table_alias != main_table
+                and getattr(self.query, "alias_map", None)
+            ):
+                # Cross-table column — resolve via the join chain.
+                joined_values = self._resolve_joined_col(obj_dict, col_table_alias, col_name)
+                obj_value = joined_values[0] if joined_values else None
+            else:
+                obj_value = obj_dict.get(col_name)
 
         # Resolve the RHS value.
         rhs = lookup.rhs
@@ -253,6 +333,11 @@ class ZODBMixin:
                     rhs = output_field.get_db_prep_value(rhs, self.connection, prepared=False)
         except Exception:
             pass
+
+        # For joined columns, use "any match" semantics: the lookup matches if
+        # any of the resolved values satisfies the condition.
+        if joined_values is not None:
+            return self._eval_lookup_multi(lookup, joined_values, rhs)
 
         # Dispatch using isinstance so subclasses (e.g. IntegerFieldExact,
         # UUIDExact) are handled by the correct branch.  The order matters:
@@ -299,6 +384,85 @@ class ZODBMixin:
         else:
             # Unknown lookup — conservative pass-through.
             return True
+
+    def _eval_lookup_multi(self, lookup, values, rhs):
+        """
+        Evaluate a lookup against a *list* of values resolved from a JOINed
+        table.  Returns True if ANY value in ``values`` satisfies the lookup.
+
+        This is the "any match" semantics required for JOINs: a row passes a
+        filter if at least one of the joined rows satisfies the condition.
+        """
+        from django.db.models.lookups import (
+            Contains,
+            EndsWith,
+            Exact,
+            GreaterThan,
+            GreaterThanOrEqual,
+            IContains,
+            IEndsWith,
+            IExact,
+            In,
+            IRegex,
+            IsNull,
+            IStartsWith,
+            LessThan,
+            LessThanOrEqual,
+            Range,
+            Regex,
+            StartsWith,
+        )
+
+        if isinstance(lookup, IsNull):
+            # IsNull(col, True)  → no joined rows (or all are None)
+            # IsNull(col, False) → at least one joined row is non-None
+            if rhs:
+                return not values or all(v is None for v in values)
+            else:
+                return any(v is not None for v in values)
+
+        # All other lookups: True if any value in the list satisfies it.
+        def matches_one(v):
+            if isinstance(lookup, Exact):
+                return v == rhs
+            elif isinstance(lookup, IExact):
+                return (v or "").lower() == (rhs or "").lower()
+            elif isinstance(lookup, In):
+                return v in rhs
+            elif isinstance(lookup, GreaterThanOrEqual):
+                return v is not None and v >= rhs
+            elif isinstance(lookup, GreaterThan):
+                return v is not None and v > rhs
+            elif isinstance(lookup, LessThanOrEqual):
+                return v is not None and v <= rhs
+            elif isinstance(lookup, LessThan):
+                return v is not None and v < rhs
+            elif isinstance(lookup, Range):
+                lo, hi = rhs
+                return v is not None and lo <= v <= hi
+            elif isinstance(lookup, IContains):
+                return (rhs or "").lower() in (v or "").lower()
+            elif isinstance(lookup, Contains):
+                return rhs in (v or "")
+            elif isinstance(lookup, IStartsWith):
+                return (v or "").lower().startswith((rhs or "").lower())
+            elif isinstance(lookup, StartsWith):
+                return (v or "").startswith(rhs or "")
+            elif isinstance(lookup, IEndsWith):
+                return (v or "").lower().endswith((rhs or "").lower())
+            elif isinstance(lookup, EndsWith):
+                return (v or "").endswith(rhs or "")
+            elif isinstance(lookup, IRegex):
+                import re
+
+                return bool(re.search(rhs, v or "", re.IGNORECASE))
+            elif isinstance(lookup, Regex):
+                import re
+
+                return bool(re.search(rhs, v or ""))
+            return True  # Unknown lookup — conservative pass-through.
+
+        return any(matches_one(v) for v in values)
 
     def _obj_to_dict(self, obj):
         """Convert a ZODB stored object to a plain dict."""
@@ -557,6 +721,12 @@ class SQLCompiler(ZODBMixin, compiler.SQLCompiler):
     def execute_sql(self, result_type=compiler.MULTI, chunked_fetch=False, chunk_size=2000):
         from django.db.models.sql.constants import CURSOR, NO_RESULTS, SINGLE
 
+        # Populate instance attributes (select, klass_info, annotation_col_map)
+        # that ModelIterable reads BEFORE iterating results — even for empty
+        # querysets.  pre_sql_setup() only builds SQL metadata; it does NOT
+        # open a ZODB connection, so this is safe for SimpleTestCase threads.
+        self._setup_klass_info()
+
         # Short-circuit for empty querysets (e.g. QuerySet.none(), EmptyManager)
         # without opening a ZODB connection — important for SimpleTestCase which
         # forbids DB access from threads (async queryset methods run in threads).
@@ -578,9 +748,6 @@ class SQLCompiler(ZODBMixin, compiler.SQLCompiler):
             )
         ):
             return self._compute_aggregates(result_type)
-
-        # Populate instance attributes that ModelIterable reads directly.
-        self._setup_klass_info()
 
         if result_type == NO_RESULTS:
             return

@@ -449,6 +449,34 @@ class DatabaseFeatures(BaseDatabaseFeatures):
             "queries.test_q.QCheckTests",
             "queries.test_query.TestQueryNoModel",
         },
+        # ── SQL query capture (connection.queries) ────────────────────────────
+        # Django's CaptureQueriesContext/assertNumQueries counts cursor.execute()
+        # calls; ZODB never calls cursor.execute(), so the count is always 0.
+        "SQL query capture relies on cursor.execute() which ZODB never calls.": {
+            "test_utils.tests.CaptureQueriesContextManagerTests",
+            "context_processors.tests.DebugContextProcessorTests.test_sql_queries",
+        },
+        # ── JSON db functions not implemented ─────────────────────────────────
+        "JSONArray/JSONObject db functions are not implemented in ZODB POC.": {
+            "db_functions.json.test_json_array.JSONArrayTests",
+            "db_functions.json.test_json_array.JSONArrayObjectTests",
+            "db_functions.json.test_json_object.JSONObjectTests",
+        },
+        # ── select_related (JOIN-based preloading) ─────────────────────────────
+        # ZODB uses lazy loading instead of SQL JOINs for related objects.
+        # Tests expecting select_related() to prefetch all objects in a single
+        # query will fail because we make one query per related access.
+        "select_related() uses lazy loading in ZODB; JOIN preloading not supported.": {
+            "select_related_onetoone.tests.ReverseSelectRelatedTestCase",
+        },
+        # ── UNIQUE constraint enforcement ─────────────────────────────────────
+        "ZODB does not enforce DB-level UNIQUE constraints.": {
+            "auth_tests.test_basic.BasicTestCase.test_unicode_username",
+        },
+        # ── Model validation: TextField max_length ────────────────────────────
+        "TextField max_length SystemCheck warning test not applicable to ZODB.": {
+            "invalid_models_tests.test_ordinary_fields.TextFieldTests.test_max_length_warning",
+        },
     }
 
     @cached_property
