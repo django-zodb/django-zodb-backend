@@ -64,7 +64,9 @@ class ZODBMixin:
 
         results = []
         for child in where_node.children:
-            if hasattr(child, "children"):
+            if isinstance(child, NothingNode):
+                result = False
+            elif hasattr(child, "children"):
                 # Nested WhereNode.
                 result = self._row_matches_where(obj_dict, child)
             else:
@@ -353,8 +355,59 @@ class SQLCompiler(ZODBMixin, compiler.SQLCompiler):
         for row in self._fetch_matching_rows():
             yield tuple(row.get(c) for c in cols)
 
+    def _compute_aggregates(self, result_type):
+        """
+        Handle the case where Django routes a get_aggregation() call through
+        SQLCompiler instead of SQLAggregateCompiler (the non-subquery path).
+
+        In this path, ``self.query.annotation_select`` contains Aggregate
+        expressions (Count, Sum, …) and ``self.query.default_cols`` is False.
+        We compute each aggregate over the matching rows and return a single
+        tuple, matching what SQLAggregateCompiler.execute_sql(SINGLE) returns.
+        """
+        from django.db.models import Count
+        from django.db.models.sql.constants import SINGLE
+
+        btree = self._get_btree()
+        if btree is None:
+            return tuple(
+                getattr(ann, "empty_result_set_value", None)
+                for ann in self.query.annotation_select.values()
+            )
+
+        where = self.query.where
+        matching = [
+            self._obj_to_dict(obj)
+            for obj in btree.values()
+            if self._row_matches_where(self._obj_to_dict(obj), where)
+        ]
+
+        results = []
+        for ann in self.query.annotation_select.values():
+            if isinstance(ann, Count):
+                results.append(len(matching))
+            else:
+                results.append(None)
+
+        result_tuple = tuple(results)
+        return result_tuple if result_type == SINGLE else [result_tuple]
+
     def execute_sql(self, result_type=compiler.MULTI, chunked_fetch=False, chunk_size=2000):
         from django.db.models.sql.constants import CURSOR, NO_RESULTS, SINGLE
+
+        # Django's get_aggregation() "else" path routes aggregate queries through
+        # SQLCompiler with annotation_select containing Aggregate expressions and
+        # default_cols=False/select=(). Detect and handle this case directly.
+        if (
+            self.query.annotation_select
+            and not self.query.default_cols
+            and not getattr(self.query, "select", None)
+            and all(
+                getattr(ann, "contains_aggregate", False)
+                for ann in self.query.annotation_select.values()
+            )
+        ):
+            return self._compute_aggregates(result_type)
 
         # Populate instance attributes that ModelIterable reads directly.
         self._setup_klass_info()

@@ -153,6 +153,26 @@ class DatabaseFeatures(BaseDatabaseFeatures):
         "ZODB does not support SELECT FOR UPDATE.": {
             "select_for_update.tests.SelectForUpdateTests",
         },
+        # ── Transactions (SQL-specific behaviour) ─────────────────────────────
+        # ZODB supports transactions and savepoints, but these tests check
+        # SQL-specific semantics (broken-transaction state, autocommit guards,
+        # etc.) that don't map to ZODB's transaction model.
+        "SQL transaction semantics tests not applicable to ZODB.": {
+            "transactions.tests.AtomicErrorsTests",
+            "transactions.tests.AtomicMiscTests",
+            "transactions.tests.AtomicMergeTests",
+            "transactions.tests.AtomicWithoutAutocommitTests",
+            "transactions.tests.AtomicInsideTransactionTests",
+            "transactions.tests.NonAutocommitTests",
+        },
+        # ── assertNumQueries (SQL query counter) ──────────────────────────────
+        # assertNumQueries() counts cursor.execute() calls, which is always 0
+        # for ZODB since no SQL is emitted.
+        "assertNumQueries counts SQL cursor calls; ZODB emits none.": {
+            "basic.tests.ModelInstanceCreationTests.test_save_parent_primary_with_default",
+            "basic.tests.ModelInstanceCreationTests.test_save_primary_with_default",
+            "basic.tests.ModelInstanceCreationTests.test_save_primary_with_default_force_update",
+        },
         # ── Window functions ──────────────────────────────────────────────────
         "ZODB does not support window functions.": {
             "expressions_window.tests.WindowFunctionTests",
@@ -212,6 +232,7 @@ class DatabaseFeatures(BaseDatabaseFeatures):
             "foreign_object.test_empty_join.RestrictedConditionsTests",
             "foreign_object.tests.MultiColumnFKTests",
             "foreign_object.tests.TestExtraJoinFilterQ",
+            "foreign_object.tests.FormsTests",
         },
         "Tuple lookups are not supported.": {
             "foreign_object.test_tuple_lookups.TupleLookupsTests",
