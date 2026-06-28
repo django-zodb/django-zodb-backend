@@ -18,7 +18,7 @@ class DatabaseCreation(BaseDatabaseCreation):
         """Switch to an in-memory MappingStorage for the test run."""
         self.connection.switch_to_test_storage()
         if verbosity >= 1:
-            print(f"Using in-memory ZODB storage for test database.")
+            print("Using in-memory ZODB storage for test database.")
         return self._get_test_db_name()
 
     def _destroy_test_db(self, test_database_name, verbosity):
@@ -34,9 +34,7 @@ class DatabaseCreation(BaseDatabaseCreation):
 
     def destroy_test_db(self, old_database_name=None, verbosity=1, keepdb=False, suffix=None):
         if not keepdb:
-            self._destroy_test_db(
-                self.connection.settings_dict["NAME"], verbosity
-            )
+            self._destroy_test_db(self.connection.settings_dict["NAME"], verbosity)
         if old_database_name is not None:
             self.connection.settings_dict["NAME"] = old_database_name
 

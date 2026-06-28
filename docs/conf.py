@@ -1,4 +1,3 @@
-import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -6,7 +5,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from django_zodb_backend import __version__
+from django_zodb_backend import __version__  # noqa: E402
 
 project = "django-zodb-backend"
 author = "django-zodb contributors"

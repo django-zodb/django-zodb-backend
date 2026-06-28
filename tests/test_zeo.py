@@ -16,15 +16,10 @@ returns a (addr, stop_fn) pair. No external ``runzeo`` process is needed,
 making these tests suitable for CI without additional services.
 """
 
-import tempfile
-import threading
-import time
-from pathlib import Path
-
 import pytest
 import transaction
-import ZODB
 import ZEO
+import ZODB
 from persistent.mapping import PersistentMapping
 
 pytest.importorskip("ZEO", reason="ZEO package not installed")
@@ -231,12 +226,6 @@ class TestDjangoBackendWithZEO:
             "TEST": {},
             "AUTOCOMMIT": True,
             "ATOMIC_REQUESTS": False,
-            "OPTIONS": {
-                "storage": "zeo",
-                "HOST": addr[0],
-                "PORT": addr[1],
-                "wait_timeout": 10,
-            },
         }
         alias = f"zeo_test_{addr[1]}"
         wrapper = DatabaseWrapper(settings_dict, alias=alias)
@@ -263,6 +252,7 @@ class TestDjangoBackendWithZEO:
         finally:
             wrapper.close()
             from django_zodb_backend.base import _db_pool, _pool_lock
+
             with _pool_lock:
                 db = _db_pool.pop(alias, None)
                 if db:

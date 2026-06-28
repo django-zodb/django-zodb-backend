@@ -30,8 +30,8 @@ import threading
 import transaction
 import ZODB
 import ZODB.MappingStorage
-from BTrees.LOBTree import LOBTree
 from BTrees.Length import Length
+from BTrees.LOBTree import LOBTree
 from BTrees.OOBTree import OOBTree
 from django.db import DEFAULT_DB_ALIAS
 from django.db.backends.base.base import BaseDatabaseWrapper

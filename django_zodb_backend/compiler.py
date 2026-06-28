@@ -32,7 +32,6 @@ predicate.  This is slower but far simpler to implement and sufficient to pass
 the Django test suite.
 """
 
-from django.db import NotSupportedError
 from django.db.models.sql import compiler
 
 
@@ -85,13 +84,26 @@ class ZODBMixin:
 
     def _eval_lookup(self, obj_dict, lookup):
         """Evaluate a single Lookup against ``obj_dict``."""
-        from django.db.models.lookups import (
-            Exact, IExact, In, IsNull,
-            GreaterThan, GreaterThanOrEqual, LessThan, LessThanOrEqual,
-            Range, Contains, IContains, StartsWith, IStartsWith,
-            EndsWith, IEndsWith, Regex, IRegex,
-        )
         from django.db.models.expressions import Col, Value
+        from django.db.models.lookups import (
+            Contains,
+            EndsWith,
+            Exact,
+            GreaterThan,
+            GreaterThanOrEqual,
+            IContains,
+            IEndsWith,
+            IExact,
+            In,
+            IRegex,
+            IsNull,
+            IStartsWith,
+            LessThan,
+            LessThanOrEqual,
+            Range,
+            Regex,
+            StartsWith,
+        )
 
         # Resolve the LHS column name.
         lhs = lookup.lhs
@@ -161,9 +173,11 @@ class ZODBMixin:
             return (obj_value or "").lower().endswith((rhs or "").lower())
         elif lookup_type is Regex:
             import re
+
             return bool(re.search(rhs, obj_value or ""))
         elif lookup_type is IRegex:
             import re
+
             return bool(re.search(rhs, obj_value or "", re.IGNORECASE))
         else:
             # Unknown lookup — conservative pass-through.
@@ -210,10 +224,10 @@ class ZODBMixin:
 
     def _parse_order_by(self):
         """Extract (column_name, is_descending) pairs from the query."""
-        from django.db.models.expressions import Col, OrderBy
+        from django.db.models.expressions import OrderBy
 
         order_by = []
-        for expr, (sql, params, is_ref) in self.get_order_by():
+        for expr, (_sql, _params, _is_ref) in self.get_order_by():
             if isinstance(expr, OrderBy):
                 source = expr.expression
                 col_name = getattr(getattr(source, "target", None), "column", None)
@@ -271,7 +285,6 @@ class SQLCompiler(ZODBMixin, compiler.SQLCompiler):
 
     def _get_select_fields(self):
         """Return the list of column names to include in the result."""
-        from django.db.models.expressions import Col
 
         if self.query.select:
             return [
@@ -290,7 +303,7 @@ class SQLCompiler(ZODBMixin, compiler.SQLCompiler):
         return tuple(row.get(f) for f in fields)
 
     def execute_sql(self, result_type=compiler.MULTI, chunked_fetch=False, chunk_size=2000):
-        from django.db.models.sql.constants import NO_RESULTS, SINGLE, MULTI, CURSOR
+        from django.db.models.sql.constants import CURSOR, NO_RESULTS, SINGLE
 
         if result_type == NO_RESULTS:
             return
@@ -338,7 +351,7 @@ class SQLInsertCompiler(ZODBMixin, compiler.SQLInsertCompiler):
         for obj_params in self.query.objs:
             # Build a dict of field → value.
             row = {}
-            for field, _, value in zip(
+            for field, _, value in zip(  # noqa: B905
                 self.query.fields,
                 self.query.fields,
                 [
@@ -348,6 +361,7 @@ class SQLInsertCompiler(ZODBMixin, compiler.SQLInsertCompiler):
                     )
                     for field in self.query.fields
                 ],
+                strict=False,
             ):
                 row[field.column] = value
 
@@ -364,6 +378,7 @@ class SQLInsertCompiler(ZODBMixin, compiler.SQLInsertCompiler):
                     seq_key = f"__seq_{table}"
                     if seq_key not in root:
                         from BTrees.Length import Length
+
                         root[seq_key] = Length(pk_val)
                     elif root[seq_key].value <= pk_val:
                         root[seq_key].set(pk_val)
@@ -396,9 +411,7 @@ class SQLDeleteCompiler(ZODBMixin, compiler.SQLDeleteCompiler):
 
         where = self.query.where
         to_delete = [
-            pk
-            for pk, obj in coll.items()
-            if self._row_matches_where(self._obj_to_dict(obj), where)
+            pk for pk, obj in coll.items() if self._row_matches_where(self._obj_to_dict(obj), where)
         ]
         for pk in to_delete:
             del coll[pk]
@@ -421,7 +434,7 @@ class SQLUpdateCompiler(ZODBMixin, compiler.SQLUpdateCompiler):
         for obj in coll.values():
             row = self._obj_to_dict(obj)
             if self._row_matches_where(row, where):
-                for field, model, value in self.query.values:
+                for field, _model, value in self.query.values:
                     col = field.column
                     db_val = field.get_db_prep_save(value, connection=self.connection)
                     obj[col] = db_val
@@ -445,13 +458,11 @@ class SQLAggregateCompiler(ZODBMixin, compiler.SQLAggregateCompiler):
 
         where = self.query.where
         matching = [
-            obj
-            for obj in coll.values()
-            if self._row_matches_where(self._obj_to_dict(obj), where)
+            obj for obj in coll.values() if self._row_matches_where(self._obj_to_dict(obj), where)
         ]
 
         results = []
-        for annotation_key, annotation in self.query.annotation_select.items():
+        for _annotation_key, annotation in self.query.annotation_select.items():
             if isinstance(annotation, Count):
                 results.append(len(matching))
             else:

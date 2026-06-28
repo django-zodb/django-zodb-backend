@@ -69,6 +69,8 @@ jobs:
 
       - name: Install Django and its Python test dependencies
         run: |
+          sudo apt-get update -q
+          sudo apt-get install -y libmemcached-dev
           cd django_repo/tests/
           pip install -e ..
           pip install -r requirements/py3.txt

@@ -1,0 +1,59 @@
+repos:
+  # ── Standard file hygiene ──────────────────────────────────────────────────
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-added-large-files
+      - id: check-case-conflict
+      - id: check-toml
+      - id: check-yaml
+      - id: debug-statements
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+        exclude: \.patch$
+      - id: forbid-new-submodules
+
+  # ── Ruff: linting + import sorting + formatting ────────────────────────────
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.14
+    hooks:
+      - id: ruff
+        args: ["--fix", "--show-fixes"]
+      - id: ruff-format
+
+  # ── RST documentation quality ──────────────────────────────────────────────
+  - repo: https://github.com/pre-commit/pygrep-hooks
+    rev: v1.10.0
+    hooks:
+      - id: rst-backticks         # catch single-backtick `foo` (should be ``foo``)
+      - id: rst-directive-colons  # catch missing :: after directives
+      - id: rst-inline-touching-normal  # catch malformed inline markup
+
+  - repo: https://github.com/rstcheck/rstcheck
+    rev: v6.2.5
+    hooks:
+      - id: rstcheck
+        additional_dependencies: [sphinx, furo]
+        args:
+          - "--report-level=warning"
+          - "--ignore-directives=code-block,toctree,note,warning,tip,important,list-table"
+          - "--ignore-roles=ref,doc,any"
+
+  # ── Spell checking ─────────────────────────────────────────────────────────
+  - repo: https://github.com/codespell-project/codespell
+    rev: v2.4.1
+    hooks:
+      - id: codespell
+        args: ["-L", "nin,zodb,btree,btrees"]  # technical terms to allow
+        exclude: "docs/_build/"
+
+  # ── GitHub Actions schema validation (manual / CI only) ───────────────────
+  - repo: https://github.com/sirosen/check-jsonschema
+    rev: 0.33.1
+    hooks:
+      - id: check-jsonschema
+        name: Validate GitHub workflow files
+        files: ^\.github/workflows/.*\.yml$
+        types: [yaml]
+        args: ["--schemafile", "https://json.schemastore.org/github-workflow"]
+        stages: [manual]

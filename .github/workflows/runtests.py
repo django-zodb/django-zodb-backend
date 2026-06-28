@@ -26,6 +26,7 @@ To run locally without sharding:
 To simulate a specific shard locally:
   DJANGO_TEST_SHARD=2 DJANGO_TEST_SHARDS=8 python runtests_.py
 """
+
 import os
 import pathlib
 import subprocess
@@ -183,22 +184,22 @@ test_apps = [
     "view_tests",
     "xor_lookups",
     # Backend-specific tests (apps under django_zodb_backend/tests/).
-    *sorted(
-        x.name
-        for x in (pathlib.Path(__file__).parent.parent.parent.resolve() / "tests").iterdir()
-        if x.is_dir() and not x.name.startswith("_")
-    )
-    if (pathlib.Path(__file__).parent.parent.parent.resolve() / "tests").exists()
-    else [],
+    *(
+        sorted(
+            x.name
+            for x in (pathlib.Path(__file__).parent.parent.parent.resolve() / "tests").iterdir()
+            if x.is_dir() and not x.name.startswith("_")
+        )
+        if (pathlib.Path(__file__).parent.parent.parent.resolve() / "tests").exists()
+        else []
+    ),
 ]
 
 # ── Shard selection ──────────────────────────────────────────────────────────
 shard_index = int(os.environ.get("DJANGO_TEST_SHARD", "0"))
 shard_count = int(os.environ.get("DJANGO_TEST_SHARDS", "1"))
 
-apps_for_shard = [
-    app for i, app in enumerate(test_apps) if i % shard_count == shard_index
-]
+apps_for_shard = [app for i, app in enumerate(test_apps) if i % shard_count == shard_index]
 
 if not apps_for_shard:
     print(f"Shard {shard_index}/{shard_count}: no apps to run.")
@@ -218,9 +219,11 @@ runtests = pathlib.Path(__file__).parent.resolve() / "runtests.py"
 cmd = [
     sys.executable,
     str(runtests),
-    "--settings", "zodb_settings",
+    "--settings",
+    "zodb_settings",
     "--parallel",
-    "-v", "2",
+    "-v",
+    "2",
     *apps_for_shard,
 ]
 

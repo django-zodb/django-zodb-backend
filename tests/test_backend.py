@@ -1,7 +1,7 @@
 """
 Test ZODB-specific backend behaviours.
 """
-import pytest
+
 import django
 from django.conf import settings
 
@@ -26,7 +26,7 @@ def configure_django():
 configure_django()
 
 
-from django.db import connection
+from django.db import connection  # noqa: E402
 
 
 class TestConnectionBasics:
