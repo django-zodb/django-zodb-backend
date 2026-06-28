@@ -339,6 +339,33 @@ class ZODBMixin:
         if joined_values is not None:
             return self._eval_lookup_multi(lookup, joined_values, rhs)
 
+        # Year/date-part lookups must be checked before Exact/GTE/LT because
+        # they extend those classes but require year-extraction semantics.
+        # filter(pubdate__year=2008) creates YearExact(Col, 2008) where rhs is
+        # an integer, not a date — so the standard Exact comparison would fail.
+        try:
+            from django.db.models.lookups import (
+                YearExact,
+                YearGte,
+                YearLt,
+                YearLte,
+            )
+
+            if isinstance(lookup, YearExact):
+                year = getattr(obj_value, "year", None)
+                return year is not None and year == rhs
+            elif isinstance(lookup, YearGte):
+                year = getattr(obj_value, "year", None)
+                return year is not None and year >= rhs
+            elif isinstance(lookup, YearLt):
+                year = getattr(obj_value, "year", None)
+                return year is not None and year < rhs
+            elif isinstance(lookup, YearLte):
+                year = getattr(obj_value, "year", None)
+                return year is not None and year <= rhs
+        except ImportError:
+            pass
+
         # Dispatch using isinstance so subclasses (e.g. IntegerFieldExact,
         # UUIDExact) are handled by the correct branch.  The order matters:
         # more specific classes must come before their parents.
