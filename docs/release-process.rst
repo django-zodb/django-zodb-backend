@@ -77,8 +77,9 @@ throughout), the ZODB fork changes are minimal because ``BigAutoField``
 Automated rebase workflow
 =========================
 
-The ``rebase-django-fork`` GitHub Actions workflow keeps the fork branch
-in sync with upstream Django automatically.
+The ``rebase-upstream`` GitHub Actions workflow (in `django-zodb/django
+<https://github.com/django-zodb/django/blob/zodb-6.0.x/.github/workflows/rebase-upstream.yml>`_)
+keeps the fork branch in sync with upstream Django automatically.
 
 **Schedule:** weekly, Monday 09:00 UTC (and manually via ``workflow_dispatch``).
 
@@ -95,7 +96,8 @@ in sync with upstream Django automatically.
 
 **Adding a new branch pair:**
 
-Extend the ``matrix`` in ``.github/workflows/rebase-django-fork.yml``:
+Extend the ``matrix`` in ``.github/workflows/rebase-upstream.yml`` in the
+`django-zodb/django <https://github.com/django-zodb/django>`_ fork:
 
 .. code-block:: yaml
 
@@ -118,11 +120,12 @@ Before merging a rebase PR, check that:
 
 **Dry run:**
 
-Trigger the workflow manually and set the ``dry_run`` input to ``true`` to
-see what the rebase would produce without pushing anything.
+Trigger the workflow manually from `django-zodb/django
+<https://github.com/django-zodb/django/actions>`_ and set the ``dry_run``
+input to ``true`` to see what the rebase would produce without pushing:
 
 .. code-block:: bash
 
-   gh workflow run rebase-django-fork.yml \
-     --repo django-zodb/django-zodb-backend \
+   gh workflow run rebase-upstream.yml \
+     --repo django-zodb/django \
      -f dry_run=true
