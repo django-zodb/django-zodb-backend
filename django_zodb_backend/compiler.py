@@ -148,6 +148,10 @@ class ZODBMixin:
 
         Handles Col (field references) and simple annotation expressions
         such as F() and Trunc().  Unknown expressions return None.
+
+        When the Col belongs to a JOINed table (e.g. content_type__app_label
+        in a values_list() query), the value is resolved by following the
+        alias_map join chain, the same way _eval_lookup resolves WHERE clauses.
         """
         from django.db.models.expressions import F, Value
         from django.db.models.functions import Trunc
@@ -155,6 +159,22 @@ class ZODBMixin:
         # Plain column reference — the common case.
         col_name = getattr(getattr(expr, "target", None), "column", None)
         if col_name is not None:
+            col_alias = getattr(expr, "alias", None)
+            main_table = None
+            try:
+                main_table = self.query.get_meta().db_table
+            except Exception:
+                pass
+            if (
+                col_alias
+                and main_table
+                and col_alias != main_table
+                and getattr(self.query, "alias_map", None)
+            ):
+                # Cross-table column (e.g. content_type__app_label): resolve
+                # by following the join chain from the main table.
+                values = self._resolve_joined_col(row_dict, col_alias, col_name)
+                return values[0] if values else None
             return row_dict.get(col_name)
 
         # F() expression: drill down to the underlying Col.
