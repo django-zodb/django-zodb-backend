@@ -86,6 +86,91 @@ class ZODBMixin:
 
         return (not match) if negated else match
 
+    def _eval_select_expr(self, expr, row_dict):
+        """
+        Evaluate a SELECT/annotation expression against a row dict.
+
+        Handles Col (field references) and simple annotation expressions
+        such as F() and Trunc().  Unknown expressions return None.
+        """
+        from django.db.models.expressions import F, Value
+        from django.db.models.functions import Trunc
+
+        # Plain column reference — the common case.
+        col_name = getattr(getattr(expr, "target", None), "column", None)
+        if col_name is not None:
+            return row_dict.get(col_name)
+
+        # F() expression: drill down to the underlying Col.
+        if isinstance(expr, F):
+            inner = getattr(expr, "lhs", expr)
+            col_name = getattr(getattr(inner, "target", None), "column", None)
+            if col_name is not None:
+                return row_dict.get(col_name)
+            # F may have source_expressions after resolution
+            sources = getattr(expr, "source_expressions", None) or []
+            if sources:
+                return self._eval_select_expr(sources[0], row_dict)
+
+        # Trunc expression (used by QuerySet.dates/datetimes).
+        if isinstance(expr, Trunc):
+            sources = expr.get_source_expressions()
+            if sources:
+                field_val = self._eval_select_expr(sources[0], row_dict)
+                if field_val is None:
+                    return None
+                kind = expr.kind  # "year", "month", "day", "hour", etc.
+                import datetime
+
+                if isinstance(field_val, (datetime.datetime, datetime.date)):
+                    try:
+                        if kind == "year":
+                            return datetime.date(field_val.year, 1, 1)
+                        elif kind == "month":
+                            return datetime.date(field_val.year, field_val.month, 1)
+                        elif kind == "week":
+                            d = (
+                                field_val.date()
+                                if isinstance(field_val, datetime.datetime)
+                                else field_val
+                            )
+                            return d - datetime.timedelta(days=d.weekday())
+                        elif kind == "day":
+                            return (
+                                field_val.date()
+                                if isinstance(field_val, datetime.datetime)
+                                else field_val
+                            )
+                        elif kind == "hour":
+                            dt = (
+                                field_val
+                                if isinstance(field_val, datetime.datetime)
+                                else datetime.datetime.combine(field_val, datetime.time())
+                            )
+                            return dt.replace(minute=0, second=0, microsecond=0)
+                        elif kind == "minute":
+                            dt = (
+                                field_val
+                                if isinstance(field_val, datetime.datetime)
+                                else datetime.datetime.combine(field_val, datetime.time())
+                            )
+                            return dt.replace(second=0, microsecond=0)
+                        elif kind == "second":
+                            dt = (
+                                field_val
+                                if isinstance(field_val, datetime.datetime)
+                                else datetime.datetime.combine(field_val, datetime.time())
+                            )
+                            return dt.replace(microsecond=0)
+                    except (ValueError, AttributeError):
+                        return None
+
+        # Value constant.
+        if isinstance(expr, Value):
+            return expr.value
+
+        return None
+
     def _eval_lookup(self, obj_dict, lookup):
         """Evaluate a single Lookup against ``obj_dict``."""
         from django.db.models.expressions import Col, Value
@@ -117,13 +202,23 @@ class ZODBMixin:
             if col_name is not None:
                 col_name = col_name.column
             elif hasattr(lhs, "lhs"):
-                # Transform — drill down to the Col.
+                # Transform or annotation expression — drill down to the Col.
                 inner = lhs
                 while hasattr(inner, "lhs") and not isinstance(inner, Col):
                     inner = inner.lhs
                 col_name = getattr(getattr(inner, "target", None), "column", None)
+                if col_name is None:
+                    # Might be an F() expression resolved as a source expression.
+                    sources = getattr(inner, "source_expressions", None) or []
+                    if sources:
+                        col_name = getattr(getattr(sources[0], "target", None), "column", None)
             else:
-                col_name = None
+                # Could be an annotation expression (F, Trunc, etc.) with
+                # source_expressions.  Try evaluating it directly.
+                obj_value = self._eval_select_expr(lhs, obj_dict)
+                # Fall through with obj_value already set; set col_name to a
+                # sentinel so we skip obj_dict.get() below.
+                col_name = "__EXPR__"
         else:
             col_name = None
 
@@ -131,7 +226,8 @@ class ZODBMixin:
             # Cannot evaluate — treat as matching (conservative).
             return True
 
-        obj_value = obj_dict.get(col_name)
+        if col_name != "__EXPR__":
+            obj_value = obj_dict.get(col_name)
 
         # Resolve the RHS value.
         rhs = lookup.rhs
@@ -141,48 +237,48 @@ class ZODBMixin:
             # Subquery or expression — not supported in this POC.
             return True
 
-        # Dispatch by lookup class.
-        lookup_type = type(lookup)
-
-        if lookup_type is Exact or lookup_type.__name__ == "Exact":
+        # Dispatch using isinstance so subclasses (e.g. IntegerFieldExact,
+        # UUIDExact) are handled by the correct branch.  The order matters:
+        # more specific classes must come before their parents.
+        if isinstance(lookup, Exact):
             return obj_value == rhs
-        elif lookup_type is IExact:
+        elif isinstance(lookup, IExact):
             return (obj_value or "").lower() == (rhs or "").lower()
-        elif lookup_type is In:
+        elif isinstance(lookup, In):
             return obj_value in rhs
-        elif lookup_type is IsNull:
+        elif isinstance(lookup, IsNull):
             return (obj_value is None) == rhs
-        elif lookup_type is GreaterThan:
-            return obj_value is not None and obj_value > rhs
-        elif lookup_type is GreaterThanOrEqual:
+        elif isinstance(lookup, GreaterThanOrEqual):
             return obj_value is not None and obj_value >= rhs
-        elif lookup_type is LessThan:
-            return obj_value is not None and obj_value < rhs
-        elif lookup_type is LessThanOrEqual:
+        elif isinstance(lookup, GreaterThan):
+            return obj_value is not None and obj_value > rhs
+        elif isinstance(lookup, LessThanOrEqual):
             return obj_value is not None and obj_value <= rhs
-        elif lookup_type is Range:
+        elif isinstance(lookup, LessThan):
+            return obj_value is not None and obj_value < rhs
+        elif isinstance(lookup, Range):
             lo, hi = rhs
             return obj_value is not None and lo <= obj_value <= hi
-        elif lookup_type is Contains:
-            return rhs in (obj_value or "")
-        elif lookup_type is IContains:
+        elif isinstance(lookup, IContains):
             return (rhs or "").lower() in (obj_value or "").lower()
-        elif lookup_type is StartsWith:
-            return (obj_value or "").startswith(rhs or "")
-        elif lookup_type is IStartsWith:
+        elif isinstance(lookup, Contains):
+            return rhs in (obj_value or "")
+        elif isinstance(lookup, IStartsWith):
             return (obj_value or "").lower().startswith((rhs or "").lower())
-        elif lookup_type is EndsWith:
-            return (obj_value or "").endswith(rhs or "")
-        elif lookup_type is IEndsWith:
+        elif isinstance(lookup, StartsWith):
+            return (obj_value or "").startswith(rhs or "")
+        elif isinstance(lookup, IEndsWith):
             return (obj_value or "").lower().endswith((rhs or "").lower())
-        elif lookup_type is Regex:
-            import re
-
-            return bool(re.search(rhs, obj_value or ""))
-        elif lookup_type is IRegex:
+        elif isinstance(lookup, EndsWith):
+            return (obj_value or "").endswith(rhs or "")
+        elif isinstance(lookup, IRegex):
             import re
 
             return bool(re.search(rhs, obj_value or "", re.IGNORECASE))
+        elif isinstance(lookup, Regex):
+            import re
+
+            return bool(re.search(rhs, obj_value or ""))
         else:
             # Unknown lookup — conservative pass-through.
             return True
@@ -300,12 +396,13 @@ class SQLCompiler(ZODBMixin, compiler.SQLCompiler):
 
         self.select entries are 3-tuples (expression, (sql, params), alias)
         where expression is a Col with a .target field whose .column gives
-        the DB column name.
+        the DB column name, OR an annotation expression evaluated via
+        _eval_select_expr.
         """
         if getattr(self, "select", None):
             cols = []
             for entry in self.select:
-                col_expr = entry[0]  # (col_expr, (sql, params), alias)
+                col_expr = entry[0]
                 name = (
                     getattr(getattr(col_expr, "target", None), "column", None)
                     or getattr(col_expr, "alias", None)
@@ -318,6 +415,28 @@ class SQLCompiler(ZODBMixin, compiler.SQLCompiler):
             return [f.column for f in self.query.get_meta().concrete_fields]
         except Exception:
             return []
+
+    def _build_row_tuple(self, row_dict):
+        """
+        Build a result row tuple from a row dict.
+
+        For regular field columns, uses row_dict.get(col_name).  For
+        annotation expressions that have no direct column mapping (name is
+        None), evaluates the expression in Python via _eval_select_expr.
+        """
+        if getattr(self, "select", None):
+            result = []
+            cols = self._select_columns()
+            for i, entry in enumerate(self.select):
+                name = cols[i]
+                if name is not None:
+                    result.append(row_dict.get(name))
+                else:
+                    result.append(self._eval_select_expr(entry[0], row_dict))
+            return tuple(result)
+        # Fallback.
+        cols = self._select_columns()
+        return tuple(row_dict.get(c) for c in cols)
 
     def _fetch_matching_rows(self):
         """Scan the OOBTree and return dicts that pass the WHERE clause."""
@@ -369,9 +488,8 @@ class SQLCompiler(ZODBMixin, compiler.SQLCompiler):
 
         # Standalone call: fetch fresh from ZODB.
         self._setup_klass_info()
-        cols = self._select_columns()
         for row in self._fetch_matching_rows():
-            yield tuple(row.get(c) for c in cols)
+            yield self._build_row_tuple(row)
 
     def _compute_aggregates(self, result_type):
         """
@@ -437,12 +555,29 @@ class SQLCompiler(ZODBMixin, compiler.SQLCompiler):
 
         # Populate instance attributes that ModelIterable reads directly.
         self._setup_klass_info()
-        cols = self._select_columns()
 
         if result_type == NO_RESULTS:
             return
 
-        rows = [tuple(row.get(c) for c in cols) for row in self._fetch_matching_rows()]
+        rows = [self._build_row_tuple(row) for row in self._fetch_matching_rows()]
+
+        # Apply DISTINCT deduplication (used by QuerySet.dates(), etc.).
+        if getattr(self.query, "distinct", False) and rows:
+            seen = []
+            deduped = []
+            for r in rows:
+                # Use a hashable key; fall back to str conversion for unhashable types.
+                try:
+                    key = r
+                    if key not in seen:
+                        seen.append(key)
+                        deduped.append(r)
+                except TypeError:
+                    key = str(r)
+                    if key not in [str(s) for s in seen]:
+                        seen.append(r)
+                        deduped.append(r)
+            rows = deduped
 
         if result_type == SINGLE:
             return rows[0] if rows else None
