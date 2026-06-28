@@ -27,3 +27,24 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 PASSWORD_HASHERS = ("django.contrib.auth.hashers.MD5PasswordHasher",)
 SECRET_KEY = "django_tests_secret_key"  # noqa: S105
 USE_TZ = False
+
+# Disable Django's migration framework — ZODB manages schema via SchemaEditor
+# (LOBTree containers), not SQL DDL. Migrations would call cursor.execute()
+# with CREATE TABLE etc. which we don't need.
+MIGRATION_MODULES = {
+    app: None
+    for app in [
+        "auth",
+        "contenttypes",
+        "sessions",
+        "sites",
+        "admin",
+        "admindocs",
+        "flatpages",
+        "redirects",
+        "staticfiles",
+        "messages",
+        "humanize",
+        "postgres",
+    ]
+}

@@ -61,10 +61,32 @@ class Cursor:
     def __exit__(self, exc_type, exc_value, traceback):
         pass
 
-    def execute(self, query, args=None):
-        from django.db import NotSupportedError
+    # DDL keywords and transaction-control statements that Django's test runner
+    # emits via cursor.execute() even for non-SQL backends. We silently ignore
+    # them; actual data operations go through the compiler, not this stub.
+    _SILENT_PREFIXES = (
+        "create ",
+        "drop ",
+        "alter ",
+        "begin",
+        "commit",
+        "rollback",
+        "savepoint",
+        "release ",
+        "set ",
+        "pragma ",
+        "select 1",  # health-check probe
+    )
 
-        raise NotSupportedError(f"ZODB does not support cursor.execute(): {query!r}")
+    def execute(self, query, args=None):
+        import logging
+
+        q = query.strip().lower()
+        if any(q.startswith(p) for p in self._SILENT_PREFIXES):
+            return  # DDL / transaction control — handled by SchemaEditor / ZODB
+        logging.getLogger("django_zodb_backend").warning(
+            "cursor.execute() called with unhandled SQL: %r", query
+        )
 
     def executemany(self, query, args):
         from django.db import NotSupportedError

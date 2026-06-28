@@ -153,6 +153,9 @@ jobs:
       - name: Install django-zodb-backend with ZEO extras
         run: pip install -e ".[zeo]"
 
+      - name: Install pytest
+        run: pip install pytest pytest-timeout
+
       - name: Run ZEO tests
         run: python -m pytest tests/test_zeo.py -v --timeout=300
 
