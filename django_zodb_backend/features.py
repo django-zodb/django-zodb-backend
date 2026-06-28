@@ -91,6 +91,9 @@ class DatabaseFeatures(BaseDatabaseFeatures):
             "backends.tests.BackendTestCase.test_queries_logger",
         },
         "Test inspects SQL query string.": {
+            "admin_changelist.tests.ChangeListTests.test_changelist_view_list_editable_changed_objects_uses_filter",
+            "admin_changelist.tests.ChangeListTests.test_many_search_terms",
+            "admin_changelist.tests.ChangeListTests.test_search_with_exact_lookup_for_non_string_field",
             "aggregation.tests.AggregateAnnotationPruningTests",
             "aggregation.tests.AggregateTestCase.test_count_star",
             "delete.tests.DeletionTests.test_only_referenced_fields_selected",
