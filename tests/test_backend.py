@@ -43,10 +43,10 @@ class TestConnectionBasics:
         assert root is not None
 
     def test_ensure_collection_creates_btree(self):
-        from BTrees.LOBTree import LOBTree
+        from BTrees.OOBTree import OOBTree
 
         coll = connection.ensure_collection("test_model")
-        assert isinstance(coll, LOBTree)
+        assert isinstance(coll, OOBTree)
 
     def test_get_collection_returns_none_for_missing(self):
         result = connection.get_collection("nonexistent")

@@ -4,9 +4,9 @@ DatabaseWrapper for ZODB.
 This is the central class Django calls to interact with the database.  It owns
 the ZODB DB / connection objects and exposes:
 
-- ``get_collection(name)``  — returns the LOBTree for a model's table
-- ``ensure_collection(name)`` — creates the LOBTree if absent
-- ``drop_collection(name)``   — removes the LOBTree
+- ``get_collection(name)``  — returns the OOBTree for a model's table
+- ``ensure_collection(name)`` — creates the OOBTree if absent
+- ``drop_collection(name)``   — removes the OOBTree
 - ``zodb_root`` property       — the ZODB root PersistentMapping
 - ``get_last_insert_id(table)`` — returns the PK just inserted
 
@@ -16,13 +16,6 @@ ZODB has no auto-increment built in.  We maintain a ``BTrees.Length.Length``
 counter per collection stored at ``root["__seq_<table>"]``.  A Length object
 supports atomic increment (it implements BTree conflict resolution), making
 it safe under concurrent writes.
-
-Relationship to django-mongodb-backend
----------------------------------------
-MongoDB uses ObjectId (a 12-byte opaque identifier) as its PK, which required
-forking Django's test suite to replace integer ``object_id`` FK fields with
-``TextField``.  ZODB uses plain 64-bit integers — the default for Django's
-``BigAutoField`` — so the test-suite changes we need are *much* smaller.
 """
 
 import threading
@@ -31,7 +24,6 @@ import transaction
 import ZODB
 import ZODB.MappingStorage
 from BTrees.Length import Length
-from BTrees.LOBTree import LOBTree
 from BTrees.OOBTree import OOBTree
 from django.db import DEFAULT_DB_ALIAS
 from django.db.backends.base.base import BaseDatabaseWrapper
@@ -306,10 +298,10 @@ class DatabaseWrapper(BaseDatabaseWrapper):
         return root.get(name)
 
     def ensure_collection(self, name):
-        """Create the LOBTree for a table if it does not exist yet."""
+        """Create the OOBTree for a table if it does not exist yet."""
         root = self.zodb_root
         if name not in root:
-            root[name] = LOBTree()
+            root[name] = OOBTree()
             self._maybe_commit()
         return root[name]
 
