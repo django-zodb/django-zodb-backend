@@ -18,13 +18,26 @@ defaults:
   run:
     shell: bash -eux {0}
 
+# ── Why matrix sharding? ──────────────────────────────────────────────────────
+# Django's test suite has ~146 apps. Running them sequentially (as
+# django-mongodb-backend does) takes 60–90 min. We split the app list
+# across 8 parallel shards, each passing its subset to a single runtests.py
+# invocation with --parallel. Result: ~8–12 min on CI.
+#
+# ZODB's in-memory MappingStorage is a further advantage: no external service
+# (mongod, postgres, etc.) needs to start — each shard gets its own fresh
+# in-memory DB with zero startup overhead.
+# ─────────────────────────────────────────────────────────────────────────────
+
 jobs:
   test:
-    name: Django Test Suite (ZODB)
+    name: "Tests (shard ${{ matrix.shard }}/8, py${{ matrix.python-version }})"
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false   # let all shards finish so we see the full picture
       matrix:
         python-version: ["3.12", "3.13"]
+        shard: [0, 1, 2, 3, 4, 5, 6, 7]
 
     steps:
       - name: Checkout django-zodb-backend
@@ -36,6 +49,12 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ matrix.python-version }}-${{ hashFiles('pyproject.toml') }}
 
       - name: Install django-zodb-backend
         run: pip install -e .
@@ -59,9 +78,31 @@ jobs:
           cp .github/workflows/zodb_settings.py django_repo/tests/
           cp .github/workflows/runtests.py django_repo/tests/runtests_.py
 
-      - name: Run tests
+      - name: Run shard ${{ matrix.shard }}
+        env:
+          DJANGO_TEST_SHARD: ${{ matrix.shard }}
+          DJANGO_TEST_SHARDS: 8
         run: python django_repo/tests/runtests_.py
 
+    permissions:
+      contents: read
+
+  # ── Summary job ─────────────────────────────────────────────────────────────
+  # Required status check: passes only when all shards pass.
+  tests-complete:
+    name: Tests complete
+    needs: test
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - run: |
+          result="${{ needs.test.result }}"
+          if [[ "$result" == "success" ]]; then
+            echo "All shards passed."
+          else
+            echo "One or more shards failed (result: $result)."
+            exit 1
+          fi
     permissions:
       contents: read
 

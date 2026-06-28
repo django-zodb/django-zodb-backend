@@ -13,28 +13,83 @@ How tests are run
 This repository includes a dedicated runner in ``.github/workflows/runtests.py`` and test
 settings in ``.github/workflows/zodb_settings.py``.
 
-Typical usage:
+**Local — run everything:**
 
 .. code-block:: bash
 
-   python .github/workflows/runtests.py
+   cd path/to/django_fork/tests/
+   cp /path/to/django-zodb-backend/.github/workflows/zodb_settings.py .
+   cp /path/to/django-zodb-backend/.github/workflows/runtests.py runtests_.py
+   python runtests_.py
 
-That runner currently exercises a curated subset of Django test apps, including areas
-such as:
+**Local — simulate a specific CI shard:**
 
-* core ORM basics,
-* model infrastructure,
-* relations,
-* queries and aggregation,
-* auth,
-* migrations,
-* validation and model forms.
+.. code-block:: bash
 
-A targeted app can also be run directly with Django's upstream ``runtests.py`` pattern:
+   DJANGO_TEST_SHARD=2 DJANGO_TEST_SHARDS=8 python runtests_.py
+
+**Local — run a single app directly:**
 
 .. code-block:: bash
 
    python path/to/django/tests/runtests.py basic --settings zodb_settings -v 2
+
+CI sharding — why it matters
+=============================
+
+Django's full test suite covers ~146 apps. Running them one-by-one in separate
+subprocesses (the approach used by ``django-mongodb-backend``) means:
+
+* 146 Python interpreter startups,
+* 146 Django ``setup()`` calls,
+* typical wall-clock time: **60–90 minutes**.
+
+We take a different approach: **matrix sharding with ``--parallel``**.
+
+.. code-block:: text
+
+   ┌─ GitHub Actions matrix ─────────────────────────────────────────────┐
+   │  shard 0: apps[0], apps[8], apps[16], …  →  runtests.py --parallel  │
+   │  shard 1: apps[1], apps[9], apps[17], …  →  runtests.py --parallel  │
+   │  …                                                                   │
+   │  shard 7: apps[7], apps[15], apps[23], … →  runtests.py --parallel  │
+   └─────────────────────────────────────────────────────────────────────┘
+
+Each shard:
+
+1. Passes **all its apps in a single** ``runtests.py`` call — one startup, not N.
+2. Adds ``--parallel`` so Django's test runner distributes test cases across
+   the 4 vCPUs available on the GitHub-hosted runner.
+
+Result: **~8–12 minutes** for the full suite (16 total matrix jobs across 2
+Python versions × 8 shards), versus 60–90 minutes sequentially.
+
+.. list-table:: Comparison of CI strategies
+   :header-rows: 1
+   :widths: 25 25 25 25
+
+   * - Strategy
+     - Approach
+     - Python starts
+     - Estimated wall time
+   * - mongodb-backend
+     - 1 job, 146 subprocesses
+     - 146
+     - 60–90 min
+   * - django-zodb (v1)
+     - 1 job, 1 subprocess
+     - 1
+     - 30–45 min
+   * - **django-zodb (current)**
+     - **8 shards × 1 subprocess, --parallel**
+     - **1 per shard**
+     - **~8–12 min**
+
+.. note::
+
+   ZODB's ``MappingStorage`` gives an additional advantage: no external service
+   startup (no ``mongod``, no PostgreSQL). Each shard's in-memory DB is
+   instantiated in microseconds.
 
 Why test setup is simpler than MongoDB
 ======================================
