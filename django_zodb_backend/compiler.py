@@ -657,21 +657,14 @@ class SQLCompiler(ZODBMixin, compiler.SQLCompiler):
         """
         Build a result row tuple from a row dict.
 
-        For regular field columns, uses row_dict.get(col_name).  For
-        annotation expressions that have no direct column mapping (name is
-        None), evaluates the expression in Python via _eval_select_expr.
+        Uses _eval_select_expr() for all SELECT entries so that cross-table
+        columns (e.g. content_type__app_label in a values_list query) are
+        resolved via the alias_map join chain rather than a direct dict lookup
+        that would always return None.
         """
         if getattr(self, "select", None):
-            result = []
-            cols = self._select_columns()
-            for i, entry in enumerate(self.select):
-                name = cols[i]
-                if name is not None:
-                    result.append(row_dict.get(name))
-                else:
-                    result.append(self._eval_select_expr(entry[0], row_dict))
-            return tuple(result)
-        # Fallback.
+            return tuple(self._eval_select_expr(entry[0], row_dict) for entry in self.select)
+        # Fallback: no select info available.
         cols = self._select_columns()
         return tuple(row_dict.get(c) for c in cols)
 
