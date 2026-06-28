@@ -205,6 +205,7 @@ class DatabaseWrapper(BaseDatabaseWrapper):
         super().__init__(settings_dict, alias=alias)
         self._zodb_conn = None
         self._last_insert_ids = {}
+        self._zodb_savepoints: dict = {}  # sid → ZODB savepoint object
         # Use in-memory storage by default (overridden in get_connection_params).
 
     # -------------------------------------------------------------------------
@@ -294,6 +295,11 @@ class DatabaseWrapper(BaseDatabaseWrapper):
             self.ensure_connection()
         return self._zodb_conn.root()
 
+    def _maybe_commit(self):
+        """Commit only when not inside a Django atomic block."""
+        if self.autocommit:
+            transaction.commit()
+
     def get_collection(self, name):
         """Return the LOBTree for a table, or None if it doesn't exist."""
         root = self.zodb_root
@@ -304,7 +310,7 @@ class DatabaseWrapper(BaseDatabaseWrapper):
         root = self.zodb_root
         if name not in root:
             root[name] = LOBTree()
-            transaction.commit()
+            self._maybe_commit()
         return root[name]
 
     def drop_collection(self, name):
@@ -314,7 +320,7 @@ class DatabaseWrapper(BaseDatabaseWrapper):
         seq_key = f"__seq_{name}"
         if seq_key in root:
             del root[seq_key]
-        transaction.commit()
+        self._maybe_commit()
 
     def ensure_index(self, table_name, index):
         """Create a secondary BTree index structure."""
@@ -334,7 +340,7 @@ class DatabaseWrapper(BaseDatabaseWrapper):
         idx_collection_key = f"__idx_{table_name}_{idx_name}"
         if idx_collection_key not in root:
             root[idx_collection_key] = OOBTree()
-        transaction.commit()
+        self._maybe_commit()
 
     def drop_index(self, table_name, index):
         root = self.zodb_root
@@ -344,7 +350,7 @@ class DatabaseWrapper(BaseDatabaseWrapper):
         idx_collection_key = f"__idx_{table_name}_{index.name}"
         if idx_collection_key in root:
             del root[idx_collection_key]
-        transaction.commit()
+        self._maybe_commit()
 
     # -------------------------------------------------------------------------
     # Auto-increment PK support
@@ -380,6 +386,20 @@ class DatabaseWrapper(BaseDatabaseWrapper):
 
     def _rollback(self):
         transaction.abort()
+
+    def _savepoint(self, sid):
+        """Create a ZODB savepoint and store it under ``sid``."""
+        self._zodb_savepoints[sid] = transaction.savepoint()
+
+    def _savepoint_rollback(self, sid):
+        """Rollback to the ZODB savepoint identified by ``sid``."""
+        sp = self._zodb_savepoints.pop(sid, None)
+        if sp is not None:
+            sp.rollback()
+
+    def _savepoint_commit(self, sid):
+        """Release a ZODB savepoint (no-op rollback — just discard it)."""
+        self._zodb_savepoints.pop(sid, None)
 
     def _close(self):
         if self._zodb_conn is not None:

@@ -67,9 +67,9 @@ class DatabaseFeatures(BaseDatabaseFeatures):
     supports_table_check_constraints = False
     supports_temporal_subtraction = False
     supports_timezones = False
-    supports_transactions = False  # ZODB has its own transaction model
+    supports_transactions = True  # ZODB has proper transaction + savepoint support
     supports_update_conflicts = False
-    uses_savepoints = False
+    uses_savepoints = True  # transaction.savepoint() / sp.rollback() works in ZODB
     uses_sequences = False
 
     # ── Test-database configuration ───────────────────────────────────────────
@@ -148,17 +148,6 @@ class DatabaseFeatures(BaseDatabaseFeatures):
         },
         "ZODB does not support cursor.callproc().": {
             "backends.test_utils.CursorWrapperTests.test_unsupported_callproc_kparams_raises_error",
-        },
-        # ── Transactions / savepoints ─────────────────────────────────────────
-        "transaction.atomic() is not supported.": {
-            "backends.base.test_base.DatabaseWrapperLoggingTests",
-            "basic.tests.SelectOnSaveTests.test_select_on_save_lying_update",
-            "migrations.test_executor.ExecutorTests.test_atomic_operation_in_non_atomic_migration",
-            "migrations.test_operations.OperationTests.test_run_python_atomic",
-        },
-        "transaction.rollback() is not supported.": {
-            "transactions.tests.AtomicMiscTests",
-            "transactions.tests.NonAutocommitTests",
         },
         # ── SELECT FOR UPDATE ─────────────────────────────────────────────────
         "ZODB does not support SELECT FOR UPDATE.": {

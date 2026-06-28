@@ -446,7 +446,8 @@ class SQLInsertCompiler(ZODBMixin, compiler.SQLInsertCompiler):
             coll[row[pk_col]] = pm
             inserted_pks.append(row[pk_col])
 
-        txn.commit()
+        if self.connection.autocommit:
+            txn.commit()
 
         if returning_fields:
             # Django expects a list of (value,) tuples for RETURNING.
@@ -470,7 +471,8 @@ class SQLDeleteCompiler(ZODBMixin, compiler.SQLDeleteCompiler):
         ]
         for pk in to_delete:
             del coll[pk]
-        txn.commit()
+        if self.connection.autocommit:
+            txn.commit()
         return len(to_delete)
 
 
@@ -495,7 +497,8 @@ class SQLUpdateCompiler(ZODBMixin, compiler.SQLUpdateCompiler):
                     obj[col] = db_val
                     obj._p_changed = True
                 updated += 1
-        txn.commit()
+        if self.connection.autocommit:
+            txn.commit()
         return updated
 
 
