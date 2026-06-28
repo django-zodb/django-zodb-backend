@@ -232,7 +232,7 @@ class DatabaseFeatures(BaseDatabaseFeatures):
             "foreign_object.test_empty_join.RestrictedConditionsTests",
             "foreign_object.tests.MultiColumnFKTests",
             "foreign_object.tests.TestExtraJoinFilterQ",
-            "foreign_object.tests.FormsTests",
+            "foreign_object.test_forms.FormsTests",
         },
         "Tuple lookups are not supported.": {
             "foreign_object.test_tuple_lookups.TupleLookupsTests",
