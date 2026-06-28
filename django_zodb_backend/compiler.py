@@ -239,25 +239,65 @@ class ZODBMixin:
 class SQLCompiler(ZODBMixin, compiler.SQLCompiler):
     """SELECT compiler for ZODB."""
 
-    def results_iter(
-        self,
-        results=None,
-        tuple_expected=False,
-        chunked_fetch=False,
-        chunk_size=2000,
-    ):
+    def _setup_klass_info(self):
         """
-        Execute the query against ZODB and yield result rows.
+        Populate self.select, self.klass_info, self.annotation_col_map.
 
-        Each row is a tuple of values in the order specified by
-        ``self.query.select`` (or all columns if select is empty).
+        Django 6.0's ModelIterable reads these as instance attributes
+        (not from a pre_sql_setup() return value), so we must set them
+        before returning from execute_sql().  We try calling the parent's
+        pre_sql_setup() first (it builds the SQL AST which is harmless),
+        and fall back to a minimal manual setup if it raises.
         """
+        try:
+            self.pre_sql_setup()
+        except Exception:
+            pass
+
+        # Ensure klass_info is always set for concrete model queries.
+        if getattr(self, "klass_info", None) is None and self.query.model is not None:
+            meta = self.query.get_meta()
+            fields = meta.concrete_fields
+            # Build minimal select list matching concrete fields.
+            if not getattr(self, "select", None):
+                self.select = [(f.col, None) for f in fields]
+            self.klass_info = {
+                "model": self.query.model,
+                "select_fields": range(len(fields)),
+            }
+        if not hasattr(self, "annotation_col_map"):
+            self.annotation_col_map = {}
+
+    def _select_columns(self):
+        """
+        Return column names in the order of self.select.
+
+        self.select is set by pre_sql_setup() as a list of (Col, alias)
+        pairs; each Col has a .target field with a .column attribute.
+        """
+        if getattr(self, "select", None):
+            cols = []
+            for col_expr, _ in self.select:
+                name = (
+                    getattr(getattr(col_expr, "target", None), "column", None)
+                    or getattr(col_expr, "alias", None)
+                    or getattr(col_expr, "column", None)
+                )
+                cols.append(name)
+            return cols
+        # Fallback: all concrete model fields.
+        try:
+            return [f.column for f in self.query.get_meta().concrete_fields]
+        except Exception:
+            return []
+
+    def _fetch_matching_rows(self):
+        """Scan the LOBTree and return dicts that pass the WHERE clause."""
         coll = self._get_collection()
         if coll is None:
-            return
+            return []
 
         where = self.query.where
-        # Collect all objects matching the WHERE clause.
         matching = []
         for obj in coll.values():
             row = self._obj_to_dict(obj)
@@ -277,42 +317,52 @@ class SQLCompiler(ZODBMixin, compiler.SQLCompiler):
         if low or high:
             matching = matching[low:high]
 
-        # Determine which fields to return.
-        select_fields = self._get_select_fields()
+        return matching
 
-        for row in matching:
-            yield self._row_to_tuple(row, select_fields)
+    def results_iter(
+        self,
+        results=None,
+        tuple_expected=False,
+        chunked_fetch=False,
+        chunk_size=2000,
+    ):
+        """
+        Yield result rows as tuples.
 
-    def _get_select_fields(self):
-        """Return the list of column names to include in the result."""
+        When called by ModelIterable, ``results`` is the value returned by
+        execute_sql() — a list of row-tuple chunks.  When called standalone
+        (results=None), we fetch from ZODB directly.
+        """
+        if results is not None:
+            # Unwrap the chunks returned by execute_sql(MULTI).
+            for chunk in results:
+                yield from chunk
+            return
 
-        if self.query.select:
-            return [
-                getattr(getattr(s, "target", None), "column", None) or getattr(s, "alias", None)
-                for s in self.query.select
-            ]
-        # Default: all fields on the model.
-        try:
-            return [f.column for f in self.query.get_meta().fields]
-        except Exception:
-            return []
-
-    def _row_to_tuple(self, row, fields):
-        if not fields:
-            return tuple(row.values())
-        return tuple(row.get(f) for f in fields)
+        # Standalone call: fetch fresh from ZODB.
+        self._setup_klass_info()
+        cols = self._select_columns()
+        for row in self._fetch_matching_rows():
+            yield tuple(row.get(c) for c in cols)
 
     def execute_sql(self, result_type=compiler.MULTI, chunked_fetch=False, chunk_size=2000):
         from django.db.models.sql.constants import CURSOR, NO_RESULTS, SINGLE
 
+        # Populate instance attributes that ModelIterable reads directly.
+        self._setup_klass_info()
+        cols = self._select_columns()
+
         if result_type == NO_RESULTS:
             return
-        rows = list(self.results_iter(chunked_fetch=chunked_fetch, chunk_size=chunk_size))
+
+        rows = [tuple(row.get(c) for c in cols) for row in self._fetch_matching_rows()]
+
         if result_type == SINGLE:
             return rows[0] if rows else None
         if result_type == CURSOR:
             return rows
-        return iter(rows)
+        # MULTI: return as a list of chunks so results_iter() can unwrap them.
+        return [rows]
 
     def has_results(self):
         coll = self._get_collection()
@@ -330,12 +380,9 @@ class SQLCompiler(ZODBMixin, compiler.SQLCompiler):
         if coll is None:
             return 0
         where = self.query.where
-        count = 0
-        for obj in coll.values():
-            row = self._obj_to_dict(obj)
-            if self._row_matches_where(row, where):
-                count += 1
-        return count
+        return sum(
+            1 for obj in coll.values() if self._row_matches_where(self._obj_to_dict(obj), where)
+        )
 
 
 class SQLInsertCompiler(ZODBMixin, compiler.SQLInsertCompiler):
