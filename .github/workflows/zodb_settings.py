@@ -9,6 +9,8 @@
 #   so we do NOT need the ObjectId-related test suite changes that the MongoDB
 #   fork required. This significantly reduces the number of test adaptations.
 # - USE_TZ = False to keep timezone handling simple in the POC.
+# - No MIGRATION_MODULES override — migrations run normally via our
+#   SchemaEditor which maps create_model/delete_model to OOBTree operations.
 
 DATABASES = {
     "default": {
@@ -27,24 +29,3 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 PASSWORD_HASHERS = ("django.contrib.auth.hashers.MD5PasswordHasher",)
 SECRET_KEY = "django_tests_secret_key"  # noqa: S105
 USE_TZ = False
-
-# Disable Django's migration framework — ZODB manages schema via SchemaEditor
-# (LOBTree containers), not SQL DDL. Migrations would call cursor.execute()
-# with CREATE TABLE etc. which we don't need.
-MIGRATION_MODULES = {
-    app: None
-    for app in [
-        "auth",
-        "contenttypes",
-        "sessions",
-        "sites",
-        "admin",
-        "admindocs",
-        "flatpages",
-        "redirects",
-        "staticfiles",
-        "messages",
-        "humanize",
-        "postgres",
-    ]
-}
