@@ -4,16 +4,16 @@ DatabaseWrapper for ZODB.
 This is the central class Django calls to interact with the database.  It owns
 the ZODB DB / connection objects and exposes:
 
-- ``get_collection(name)``  — returns the OOBTree for a model's table
-- ``ensure_collection(name)`` — creates the OOBTree if absent
-- ``drop_collection(name)``   — removes the OOBTree
+- ``get_btree(name)``  — returns the OOBTree for a model's table
+- ``ensure_btree(name)`` — creates the OOBTree if absent
+- ``drop_btree(name)``   — removes the OOBTree
 - ``zodb_root`` property       — the ZODB root PersistentMapping
 - ``get_last_insert_id(table)`` — returns the PK just inserted
 
 Primary key strategy
 --------------------
 ZODB has no auto-increment built in.  We maintain a ``BTrees.Length.Length``
-counter per collection stored at ``root["__seq_<table>"]``.  A Length object
+counter per table stored at ``root["__seq_<table>"]``.  A Length object
 supports atomic increment (it implements BTree conflict resolution), making
 it safe under concurrent writes.
 """
@@ -292,12 +292,12 @@ class DatabaseWrapper(BaseDatabaseWrapper):
         if self.autocommit:
             transaction.commit()
 
-    def get_collection(self, name):
-        """Return the LOBTree for a table, or None if it doesn't exist."""
+    def get_btree(self, name):
+        """Return the OOBTree for a table, or None if it doesn't exist."""
         root = self.zodb_root
         return root.get(name)
 
-    def ensure_collection(self, name):
+    def ensure_btree(self, name):
         """Create the OOBTree for a table if it does not exist yet."""
         root = self.zodb_root
         if name not in root:
@@ -305,7 +305,7 @@ class DatabaseWrapper(BaseDatabaseWrapper):
             self._maybe_commit()
         return root[name]
 
-    def drop_collection(self, name):
+    def drop_btree(self, name):
         root = self.zodb_root
         if name in root:
             del root[name]
@@ -329,9 +329,9 @@ class DatabaseWrapper(BaseDatabaseWrapper):
             "unique": getattr(index, "unique", False),
         }
         # Create the index BTree.
-        idx_collection_key = f"__idx_{table_name}_{idx_name}"
-        if idx_collection_key not in root:
-            root[idx_collection_key] = OOBTree()
+        idx_btree_key = f"__idx_{table_name}_{idx_name}"
+        if idx_btree_key not in root:
+            root[idx_btree_key] = OOBTree()
         self._maybe_commit()
 
     def drop_index(self, table_name, index):
@@ -339,9 +339,9 @@ class DatabaseWrapper(BaseDatabaseWrapper):
         meta_key = f"__meta_{table_name}"
         if meta_key in root:
             root[meta_key]["indexes"].pop(index.name, None)
-        idx_collection_key = f"__idx_{table_name}_{index.name}"
-        if idx_collection_key in root:
-            del root[idx_collection_key]
+        idx_btree_key = f"__idx_{table_name}_{index.name}"
+        if idx_btree_key in root:
+            del root[idx_btree_key]
         self._maybe_commit()
 
     # -------------------------------------------------------------------------

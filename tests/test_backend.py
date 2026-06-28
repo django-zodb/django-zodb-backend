@@ -42,14 +42,14 @@ class TestConnectionBasics:
         root = connection.zodb_root
         assert root is not None
 
-    def test_ensure_collection_creates_btree(self):
+    def test_ensure_btree_creates_btree(self):
         from BTrees.OOBTree import OOBTree
 
-        coll = connection.ensure_collection("test_model")
+        coll = connection.ensure_btree("test_model")
         assert isinstance(coll, OOBTree)
 
-    def test_get_collection_returns_none_for_missing(self):
-        result = connection.get_collection("nonexistent")
+    def test_get_btree_returns_none_for_missing(self):
+        result = connection.get_btree("nonexistent")
         assert result is None
 
     def test_get_next_pk_increments(self):
@@ -68,17 +68,17 @@ class TestConnectionBasics:
         assert pk_b == 1
         assert pk_a2 == 2
 
-    def test_drop_collection(self):
-        connection.ensure_collection("drop_me")
-        assert connection.get_collection("drop_me") is not None
-        connection.drop_collection("drop_me")
-        assert connection.get_collection("drop_me") is None
+    def test_drop_btree(self):
+        connection.ensure_btree("drop_me")
+        assert connection.get_btree("drop_me") is not None
+        connection.drop_btree("drop_me")
+        assert connection.get_btree("drop_me") is None
 
     def test_insert_and_retrieve(self):
         import transaction
         from persistent.mapping import PersistentMapping
 
-        coll = connection.ensure_collection("mymodel")
+        coll = connection.ensure_btree("mymodel")
         pk = connection.get_next_pk("mymodel")
         coll[pk] = PersistentMapping({"id": pk, "name": "Alice", "age": 30})
         transaction.commit()
@@ -92,15 +92,15 @@ class TestConnectionBasics:
         import transaction
         from persistent.mapping import PersistentMapping
 
-        coll = connection.ensure_collection("isolation_test")
+        coll = connection.ensure_btree("isolation_test")
         coll[1] = PersistentMapping({"id": 1, "value": "first test"})
         transaction.commit()
         # This data should not appear in the next test.
 
     def test_isolation_from_previous_test(self):
         """If isolation works, the previous test's data should not be here."""
-        coll = connection.get_collection("isolation_test")
-        assert coll is None  # fresh storage — collection doesn't exist
+        coll = connection.get_btree("isolation_test")
+        assert coll is None  # fresh storage — BTree doesn't exist yet
 
 
 class TestVendorInfo:

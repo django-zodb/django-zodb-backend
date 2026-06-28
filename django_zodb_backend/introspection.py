@@ -3,19 +3,19 @@ from django.db.backends.base.introspection import BaseDatabaseIntrospection, Tab
 
 class DatabaseIntrospection(BaseDatabaseIntrospection):
     """
-    Introspect the ZODB root to enumerate collections and their indexes.
+    Introspect the ZODB root to enumerate BTrees and their indexes.
 
     Django uses introspection primarily for:
     - ``inspectdb`` management command
     - Schema migration auto-detection
     - ``test_utils.CaptureQueriesContext``
 
-    Because ZODB is schema-free, introspection returns the list of BTree
+    Because ZODB is schema-free, introspection returns the list of OOBTree
     containers in the root and their associated secondary index structures.
     """
 
     def get_table_list(self, cursor):
-        """Return a list of TableInfo for all collections in the ZODB root."""
+        """Return a list of TableInfo for all BTrees in the ZODB root."""
         root = self.connection.zodb_root
         return [
             TableInfo(name=key, type="t")
@@ -34,7 +34,7 @@ class DatabaseIntrospection(BaseDatabaseIntrospection):
         return {}
 
     def get_constraints(self, cursor, table_name):
-        """Return constraints/indexes defined on a collection."""
+        """Return constraints/indexes defined on a BTree."""
         root = self.connection.zodb_root
         meta_key = f"__meta_{table_name}"
         constraints = {}

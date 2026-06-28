@@ -16,11 +16,11 @@ class DatabaseFeatures(BaseDatabaseFeatures):
     Tests in ``django_test_expected_failures`` are known to produce wrong
     results at POC stage but should eventually pass.
 
-    Remove entries from these collections as the backend matures.
+    Remove entries from these dicts as the backend matures.
     """
 
     # ── Core identity ─────────────────────────────────────────────────────────
-    # ZODB uses Python's native integer PKs via BTrees.LOBTree (64-bit int).
+    # ZODB uses Python's native integer PKs via OOBTree (supports int and string PKs).
     # Unlike MongoDB's ObjectId, we keep Django's standard BigAutoField.
     interprets_empty_strings_as_nulls = False
     is_sql_auto_id = False

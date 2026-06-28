@@ -79,7 +79,7 @@ class DatabaseOperations(BaseDatabaseOperations):
         return f"INTERVAL {sql} MILLISECOND"
 
     def quote_name(self, name):
-        # No SQL quoting needed — collection names are plain Python strings.
+        # No SQL quoting needed — BTree table names are plain Python strings.
         if name.startswith('"') and name.endswith('"'):
             return name
         return name
@@ -95,7 +95,7 @@ class DatabaseOperations(BaseDatabaseOperations):
         for table in tables:
             if table.startswith("system."):
                 continue
-            coll = self.connection.get_collection(table)
+            coll = self.connection.get_btree(table)
             if coll is not None:
                 coll.clear()
                 import transaction
@@ -116,7 +116,7 @@ class DatabaseOperations(BaseDatabaseOperations):
 
     def integer_field_range(self, internal_type):
         # Match Django's standard ranges; ZODB doesn't enforce them but
-        # BTrees.LOBTree uses 64-bit int keys.
+        # OOBTree supports any hashable key (int, str, etc.).
         ranges = {
             "SmallIntegerField": (-32768, 32767),
             "PositiveSmallIntegerField": (0, 32767),

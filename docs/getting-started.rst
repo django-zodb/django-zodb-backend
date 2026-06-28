@@ -76,7 +76,7 @@ A regular Django model works as expected:
 From Django's perspective, this is still a standard ORM model. The difference is in
 how persistence happens underneath:
 
-* the model's table becomes a ZODB collection in the root object,
+* the model's table becomes a ZODB OOBTree in the root object,
 * the row primary key is a 64-bit integer,
 * the stored record is a persistent mapping rather than a SQL row.
 
@@ -86,7 +86,7 @@ Running migrations
 ==================
 
 Migrations still matter, but schema operations are much lighter than on an SQL backend.
-``create_model()`` creates a collection. ``delete_model()`` removes it. ``add_field()``
+``create_model()`` creates a BTree. ``delete_model()`` removes it. ``add_field()``
 and ``remove_field()`` are effectively no-ops because stored Python objects carry their
 own shape.
 

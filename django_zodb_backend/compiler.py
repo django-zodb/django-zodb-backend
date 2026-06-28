@@ -13,7 +13,7 @@ The strategy is "lazy SQL, eager ZODB":
 1. Django constructs its SQL AST as normal (we don't interfere).
 2. When ``execute_sql()`` / ``results_iter()`` is called, we walk the
    compiled query and translate it into a Python filtering function applied
-   to the LOBTree for that model's collection.
+   to the OOBTree for this model's table.
 3. Results are returned as plain dicts (matching the tuple-based interface
    Django's ModelIterable expects).
 
@@ -38,10 +38,10 @@ from django.db.models.sql import compiler
 class ZODBMixin:
     """Shared helpers for all ZODB compiler classes."""
 
-    def _get_collection(self):
-        """Return the LOBTree for the query's base table."""
+    def _get_btree(self):
+        """Return the OOBTree for the query's base table."""
         table = self.query.get_meta().db_table
-        return self.connection.get_collection(table)
+        return self.connection.get_btree(table)
 
     def _row_matches_where(self, obj_dict, where_node):
         """
@@ -300,8 +300,8 @@ class SQLCompiler(ZODBMixin, compiler.SQLCompiler):
             return []
 
     def _fetch_matching_rows(self):
-        """Scan the LOBTree and return dicts that pass the WHERE clause."""
-        coll = self._get_collection()
+        """Scan the OOBTree and return dicts that pass the WHERE clause."""
+        coll = self._get_btree()
         if coll is None:
             return []
 
@@ -373,7 +373,7 @@ class SQLCompiler(ZODBMixin, compiler.SQLCompiler):
         return [rows]
 
     def has_results(self):
-        coll = self._get_collection()
+        coll = self._get_btree()
         if coll is None:
             return False
         where = self.query.where
@@ -384,7 +384,7 @@ class SQLCompiler(ZODBMixin, compiler.SQLCompiler):
         return False
 
     def get_count(self, using=None):
-        coll = self._get_collection()
+        coll = self._get_btree()
         if coll is None:
             return 0
         where = self.query.where
@@ -400,7 +400,7 @@ class SQLInsertCompiler(ZODBMixin, compiler.SQLInsertCompiler):
         import transaction as txn
 
         table = self.query.get_meta().db_table
-        coll = self.connection.ensure_collection(table)
+        coll = self.connection.ensure_btree(table)
 
         inserted_pks = []
         for obj_params in self.query.objs:
@@ -461,7 +461,7 @@ class SQLDeleteCompiler(ZODBMixin, compiler.SQLDeleteCompiler):
     def execute_sql(self, result_type=compiler.MULTI):
         import transaction as txn
 
-        coll = self._get_collection()
+        coll = self._get_btree()
         if coll is None:
             return
 
@@ -482,7 +482,7 @@ class SQLUpdateCompiler(ZODBMixin, compiler.SQLUpdateCompiler):
     def execute_sql(self, result_type):
         import transaction as txn
 
-        coll = self._get_collection()
+        coll = self._get_btree()
         if coll is None:
             return 0
 
@@ -510,7 +510,7 @@ class SQLAggregateCompiler(ZODBMixin, compiler.SQLAggregateCompiler):
         # Full aggregation support (SUM, AVG, etc.) is future work.
         from django.db.models import Count
 
-        coll = self._get_collection()
+        coll = self._get_btree()
         if coll is None:
             return (0,)
 

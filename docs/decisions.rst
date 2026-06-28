@@ -133,7 +133,7 @@ on-disk table definition.
 Decision
 --------
 
-Implement ``create_model()`` and ``delete_model()`` as real collection operations, but
+Implement ``create_model()`` and ``delete_model()`` as real BTree operations, but
 make field add/remove/alter operations no-ops at the storage layer.
 
 Consequences

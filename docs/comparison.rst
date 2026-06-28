@@ -117,7 +117,7 @@ ZODB backend
 
 * let Django construct the SQL AST as usual,
 * ignore SQL as an execution language,
-* iterate ZODB collections directly,
+* iterate ZODB BTrees directly,
 * apply the ``WHERE`` tree as Python predicates.
 
 Advantages:
@@ -156,10 +156,10 @@ Both systems are effectively schemaless from the relational perspective, but the
 backend expressions differ.
 
 MongoDB
-   Backend schema editing still creates and drops collections and manages indexes.
+   Backend schema editing still creates and drops BTrees and manages indexes.
 
 ZODB
-   ``create_model()`` creates a root-level collection, ``delete_model()`` removes it,
+   ``create_model()`` creates a root-level BTree, ``delete_model()`` removes it,
    and field addition/removal is a storage no-op because Python objects carry their own
    attributes.
 

@@ -242,12 +242,12 @@ class TestDjangoBackendWithZEO:
 
         try:
             wrapper.ensure_connection()
-            coll = wrapper.ensure_collection("test_table")
+            coll = wrapper.ensure_btree("test_table")
             pk = wrapper.get_next_pk("test_table")
             coll[pk] = PersistentMapping({"id": pk, "name": "Alice"})
             transaction.commit()
 
-            retrieved = wrapper.get_collection("test_table")[pk]
+            retrieved = wrapper.get_btree("test_table")[pk]
             assert retrieved["name"] == "Alice"
         finally:
             wrapper.close()
@@ -276,14 +276,14 @@ class TestDjangoBackendWithZEO:
             wrapper2.ensure_connection()
 
             # Write via wrapper1.
-            coll1 = wrapper1.ensure_collection("cross_conn")
+            coll1 = wrapper1.ensure_btree("cross_conn")
             pk = wrapper1.get_next_pk("cross_conn")
             coll1[pk] = PersistentMapping({"id": pk, "value": "from_wrapper1"})
             transaction.commit()
             wrapper1.close()
 
             # Read via wrapper2.
-            coll2 = wrapper2.get_collection("cross_conn")
+            coll2 = wrapper2.get_btree("cross_conn")
             assert coll2 is not None
             assert coll2[pk]["value"] == "from_wrapper1"
         finally:

@@ -15,7 +15,7 @@ Core backend surface
 
 * ``DatabaseWrapper`` integration with Django's backend API,
 * per-alias ``ZODB.DB`` pooling with per-thread connections,
-* collection creation and deletion,
+* BTree creation and deletion,
 * integer primary-key allocation via ``BTrees.Length.Length``,
 * transaction commit/rollback wiring,
 * a cursor stub for Django internals.
