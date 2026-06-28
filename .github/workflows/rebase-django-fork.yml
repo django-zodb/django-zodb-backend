@@ -1,0 +1,168 @@
+# Periodically rebase the django-zodb/django fork branches onto the
+# corresponding upstream Django stable branches.
+#
+# Mirrors the approach described in the django-mongodb-backend release process:
+# https://django-mongodb-backend.readthedocs.io/en/latest/internals/release-process/
+#
+# For each tracked branch pair (FORK_BRANCH → UPSTREAM_BRANCH):
+#   1. Fetch django/django and the fork.
+#   2. Rebase FORK_BRANCH onto upstream UPSTREAM_BRANCH.
+#   3. If new commits are present, push to a dated PR branch and open a PR.
+#   4. If a PR for the same base already exists, skip (avoid spam).
+#
+# The PR targets django-zodb/django so that humans can review rebase
+# conflicts before the branch is updated.
+#
+# Runs on a schedule (weekly, Monday 09:00 UTC) and can be triggered manually.
+
+name: Rebase Django fork
+
+on:
+  schedule:
+    - cron: "0 9 * * 1"   # weekly, Monday 09:00 UTC
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run — rebase but do not push or open PRs"
+        required: false
+        default: "false"
+        type: choice
+        options: ["true", "false"]
+
+jobs:
+  rebase:
+    name: "Rebase ${{ matrix.fork_branch }} → ${{ matrix.upstream_branch }}"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write       # push to django-zodb/django
+      pull-requests: write  # open PRs on django-zodb/django
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - fork_branch: zodb-6.0.x
+            upstream_branch: stable/6.0.x
+
+    steps:
+      - name: Set up Git identity
+        run: |
+          git config --global user.name  "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Check out fork branch
+        uses: actions/checkout@v4
+        with:
+          repository: django-zodb/django
+          ref: ${{ matrix.fork_branch }}
+          # Full history needed for rebase
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Add upstream remote
+        run: |
+          git remote add upstream https://github.com/django/django.git
+          git fetch upstream ${{ matrix.upstream_branch }}
+
+      - name: Record tip SHAs before rebase
+        id: before
+        run: |
+          echo "fork_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "upstream_sha=$(git rev-parse upstream/${{ matrix.upstream_branch }})" >> "$GITHUB_OUTPUT"
+
+      - name: Rebase onto upstream
+        id: rebase
+        run: |
+          set +e
+          git rebase upstream/${{ matrix.upstream_branch }}
+          exit_code=$?
+          set -e
+          if [ $exit_code -ne 0 ]; then
+            echo "rebase_ok=false" >> "$GITHUB_OUTPUT"
+            git rebase --abort || true
+          else
+            echo "rebase_ok=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check for new commits
+        id: diff
+        if: steps.rebase.outputs.rebase_ok == 'true'
+        run: |
+          if git diff --quiet ${{ steps.before.outputs.fork_sha }} HEAD; then
+            echo "has_new_commits=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_new_commits=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check for existing open PR
+        id: existing_pr
+        if: steps.rebase.outputs.rebase_ok == 'true' && steps.diff.outputs.has_new_commits == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          COUNT=$(gh pr list \
+            --repo django-zodb/django \
+            --base ${{ matrix.fork_branch }} \
+            --label "rebase" \
+            --state open \
+            --json number \
+            --jq 'length')
+          echo "open_pr_count=$COUNT" >> "$GITHUB_OUTPUT"
+
+      - name: Push rebased branch and open PR
+        if: |
+          steps.rebase.outputs.rebase_ok == 'true' &&
+          steps.diff.outputs.has_new_commits == 'true' &&
+          steps.existing_pr.outputs.open_pr_count == '0' &&
+          inputs.dry_run != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          DATE=$(date +%Y-%m-%d)
+          PR_BRANCH="rebase/${{ matrix.fork_branch }}-${DATE}"
+          git push origin HEAD:refs/heads/${PR_BRANCH} --force-with-lease
+
+          UPSTREAM_SHA_SHORT=$(git rev-parse --short upstream/${{ matrix.upstream_branch }})
+
+          gh pr create \
+            --repo django-zodb/django \
+            --base ${{ matrix.fork_branch }} \
+            --head ${PR_BRANCH} \
+            --title "Rebase ${{ matrix.fork_branch }} onto django/django ${{ matrix.upstream_branch }} (${DATE})" \
+            --label "rebase" \
+            --body "$(cat <<'EOF'
+          ## Automated rebase
+
+          This PR rebases \`${{ matrix.fork_branch }}\` onto \`django/django\` \`${{ matrix.upstream_branch }}\`
+          at commit \`${UPSTREAM_SHA_SHORT}\`.
+
+          ### What to check before merging
+
+          - [ ] No unintended conflicts were introduced in the rebase.
+          - [ ] Test suite still passes (trigger the \`tests\` workflow against this branch).
+          - [ ] Any new Django commits that touch test infrastructure are reflected in
+                \`django-zodb-backend\` features/skips if needed.
+
+          ### How to run CI against this branch
+
+          Update \`DJANGO_FORK_REF\` in \`tests.yml\` to \`${PR_BRANCH}\`, or checkout
+          this branch locally and point \`runtests.py\` at it.
+
+          ---
+          *Opened automatically by the [Rebase Django fork](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) workflow.*
+          EOF
+          )"
+
+      - name: Report rebase conflict
+        if: steps.rebase.outputs.rebase_ok == 'false'
+        run: |
+          echo "::error::Rebase of ${{ matrix.fork_branch }} onto ${{ matrix.upstream_branch }} produced conflicts."
+          echo "::error::Manual resolution is required. Fetch django/django ${{ matrix.upstream_branch }} and rebase locally."
+          exit 1
+
+      - name: Dry run summary
+        if: inputs.dry_run == 'true'
+        run: |
+          echo "Dry run — no push or PR created."
+          echo "Rebase OK: ${{ steps.rebase.outputs.rebase_ok }}"
+          echo "Has new commits: ${{ steps.diff.outputs.has_new_commits }}"

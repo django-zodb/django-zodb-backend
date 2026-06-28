@@ -26,6 +26,7 @@ Start here:
 * :doc:`architecture` for the storage model and query execution pipeline.
 * :doc:`comparison` for the detailed comparison with ``django-mongodb-backend``.
 * :doc:`django-fork` for the expected Django fork changes on the ``zodb-6.0.x`` branch.
+* :doc:`release-process` for branch policy and the automated Django fork rebase workflow.
 
 .. toctree::
    :maxdepth: 2
@@ -38,4 +39,5 @@ Start here:
    django-fork
    storage-backends
    testing
+   release-process
    roadmap
