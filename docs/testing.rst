@@ -106,6 +106,40 @@ That means:
    This is one of the clearest quality-of-life wins of the ZODB approach: contributors can
    focus on backend behavior instead of database service orchestration.
 
+ZEO-specific test job
+=====================
+
+The ZEO tests (``tests/test_zeo.py``) live in a **separate CI job** — ``test-zeo`` — for a
+specific reason: each test fixture starts a fresh in-process ZEO server via ``ZEO.server()``,
+which spins up an asyncio event loop. This adds ~10–15 seconds per test, making the
+suite take ~2 minutes total. Isolating it means this never delays or blocks the main shards.
+
+.. code-block:: text
+
+   CI jobs (per push / PR)
+   ├── test (matrix: 8 shards × 2 Python versions = 16 jobs)  ~8-12 min
+   ├── test-zeo (matrix: 2 Python versions = 2 jobs)           ~2 min
+   └── lint                                                     ~30 s
+
+To run ZEO tests locally:
+
+.. code-block:: bash
+
+   pip install -e ".[zeo,dev]"
+   python -m pytest tests/test_zeo.py -v
+
+ZEO tests cover:
+
+* connectivity and roundtrip through the ZEO protocol layer,
+* data committed by client A visible to independent client B (the core ZEO guarantee),
+* ``FileStorage``-backed ZEO persistence across server restart,
+* BTree concurrent writes from two clients without conflicts,
+* the ``server_sync`` stronger-consistency option,
+* the Django ``DatabaseWrapper`` reading and writing data via ZEO storage.
+
+No external ``runzeo`` process is needed — ``ZEO.server()`` manages an in-process
+server on a random port, making the tests fully self-contained.
+
 Currently skipped areas
 =======================
 

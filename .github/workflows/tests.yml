@@ -120,3 +120,39 @@ jobs:
       - run: ruff check django_zodb_backend/
     permissions:
       contents: read
+
+  # ── ZEO-specific tests ───────────────────────────────────────────────────
+  # Run as a separate job because each test starts an in-process ZEO server
+  # (asyncio event-loop spin-up ~10-15s per test), so the suite takes ~2 min.
+  # Kept isolated so it never blocks or delays the main sharded matrix.
+  test-zeo:
+    name: "ZEO storage tests (py${{ matrix.python-version }})"
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-zeo-${{ matrix.python-version }}-${{ hashFiles('pyproject.toml') }}
+
+      - name: Install django-zodb-backend with ZEO extras
+        run: pip install -e ".[zeo]"
+
+      - name: Run ZEO tests
+        run: python -m pytest tests/test_zeo.py -v --timeout=300
+
+    permissions:
+      contents: read

@@ -38,7 +38,7 @@ filestorage = [
     "ZODB>=6.0",
 ]
 zeo = [
-    "ZEO>=6.0",
+    "ZEO>=5.0",
 ]
 relstorage = [
     "RelStorage>=4.0",
@@ -50,6 +50,8 @@ docs = [
 ]
 dev = [
     "ruff",
+    "pytest",
+    "pytest-timeout",
 ]
 
 [project.urls]

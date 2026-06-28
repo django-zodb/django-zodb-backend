@@ -218,11 +218,43 @@ class DatabaseWrapper(BaseDatabaseWrapper):
             path = opts.get("PATH") or (conn_params["name"] + ".fs")
             storage = FileStorage(path)
         elif storage_type == "zeo":
-            from ZEO.ClientStorage import ClientStorage
+            # ZEO ClientStorage — connects to a running ZEO server.
+            # Supports both (host, port) TCP and Unix socket (path) addresses.
+            #
+            # OPTIONS keys:
+            #   HOST          hostname or IP (default: localhost)
+            #   PORT          TCP port (default: 8001)
+            #   PATH          Unix socket path (overrides HOST/PORT when set)
+            #   wait_timeout  seconds to wait for server (default: 30)
+            #   read_only     open read-only connection (default: False)
+            #   server_sync   call serverSync() before each read for stronger
+            #                 consistency in multi-client scenarios (default: False)
+            #
+            # For production, run the ZEO server with:
+            #   runzeo -a localhost:8001 -f /var/lib/myapp/data.fs
+            #
+            # For testing, use ZEO.server() to start an in-process server:
+            #   addr, stop = ZEO.server(path="/tmp/test.fs")
+            try:
+                from ZEO import client as zeo_client
+            except ImportError as exc:
+                raise ImportError(
+                    "ZEO storage requires the 'ZEO' package: pip install ZEO"
+                ) from exc
 
-            host = opts.get("HOST", "localhost")
-            port = int(opts.get("PORT", 8001))
-            storage = ClientStorage((host, port))
+            if unix_path := opts.get("PATH"):
+                addr = unix_path
+            else:
+                host = opts.get("HOST", "localhost")
+                port = int(opts.get("PORT", 8001))
+                addr = (host, port)
+
+            storage = zeo_client(
+                addr,
+                wait_timeout=int(opts.get("wait_timeout", 30)),
+                read_only=bool(opts.get("read_only", False)),
+                server_sync=bool(opts.get("server_sync", False)),
+            )
         else:
             raise ValueError(f"Unknown ZODB storage type: {storage_type!r}")
 
