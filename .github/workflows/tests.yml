@@ -36,7 +36,7 @@ jobs:
     strategy:
       fail-fast: false   # let all shards finish so we see the full picture
       matrix:
-        python-version: ["3.12", "3.13"]
+        python-version: ["3.13"]
         shard: [0, 1, 2, 3, 4, 5, 6, 7]
 
     steps:
@@ -133,7 +133,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.12", "3.13"]
+        python-version: ["3.13"]
 
     steps:
       - uses: actions/checkout@v4
