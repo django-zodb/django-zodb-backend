@@ -49,9 +49,11 @@ Why ``BigAutoField`` matters
 ============================
 
 Unlike MongoDB, ZODB fits naturally with Django's integer-primary-key defaults.
-The backend stores each table in a ``BTrees.LOBTree.LOBTree``, whose keys are
-64-bit integers. That makes ``BigAutoField`` the right primary-key type for the
-project and dramatically reduces the amount of Django test-suite patching required.
+The backend stores each table in a ``BTrees.OOBTree.OOBTree``, which accepts any
+Python object as a key. Integer PKs (``BigAutoField``) are the most common case
+and map efficiently to ZODB's B-tree structures. That also means the backend does
+**not** need the ObjectId-related test-suite patches that the MongoDB fork required —
+a significant reduction in the amount of Django core changes needed.
 See :doc:`comparison` and :doc:`django-fork` for the full rationale.
 
 Your first model
@@ -85,10 +87,25 @@ A representative root layout is documented in :doc:`architecture`.
 Running migrations
 ==================
 
-Migrations still matter, but schema operations are much lighter than on an SQL backend.
-``create_model()`` creates a BTree. ``delete_model()`` removes it. ``add_field()``
-and ``remove_field()`` are effectively no-ops because stored Python objects carry their
-own shape.
+Migrations work normally — ``SchemaEditor`` maps each migration operation to a
+ZODB operation rather than SQL DDL:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 35 65
+
+   * - Django migration operation
+     - ZODB equivalent
+   * - ``CreateModel``
+     - ``root[table_name] = OOBTree()``  + sequence counter
+   * - ``DeleteModel``
+     - Remove BTree, sequence counter, index containers
+   * - ``AddField`` / ``RemoveField`` / ``AlterField``
+     - No-op (ZODB is schema-free; objects carry their own shape)
+   * - ``AlterModelTable``
+     - Rename the BTree key in the root
+   * - ``AddIndex`` / ``RemoveIndex``
+     - Create or drop sidecar index containers
 
 .. code-block:: bash
 
@@ -98,8 +115,12 @@ own shape.
 .. tip::
 
    Adding a field to a model does not require rewriting existing objects. Older
-   objects simply do not have the new attribute yet, and code can handle that with
-   ``getattr(obj, "field", default)`` semantics.
+   objects simply do not have the new attribute yet — code handles that with normal
+   Python ``getattr(obj, "field", default)`` semantics.
+
+In the test suite, ``DatabaseCreation.create_test_db()`` runs ``migrate --run-syncdb``
+automatically against the in-memory store, so schema creation in tests mirrors
+real-deployment behaviour exactly. No ``MIGRATION_MODULES`` suppression is needed.
 
 Quick storage choices
 =====================

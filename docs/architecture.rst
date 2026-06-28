@@ -112,22 +112,46 @@ for a serious storage engine strategy later.
 Schema editing and migrations
 =============================
 
-Schema operations are lightweight because ZODB is schema-free:
+Schema operations are lightweight because ZODB is schema-free.
+``DatabaseSchemaEditor`` maps Django's migration operations to ZODB primitives:
 
 ``create_model()``
-   Create the table ``LOBTree``.
+   Creates the table ``OOBTree`` in the ZODB root and initialises the
+   sequence counter key (``__seq_<table>``).
 
 ``delete_model()``
-   Remove the table ``LOBTree`` and related sequence metadata.
+   Removes the table ``OOBTree``, sequence counter, and all sidecar index
+   containers from the root.
 
 ``add_field()`` / ``remove_field()`` / ``alter_field()``
-   No-op from the storage layer's point of view.
+   No-op from the storage layer's point of view. ZODB objects carry their own
+   shape; adding or removing a field does not require rewriting existing records.
+
+``alter_db_table()``
+   Renames the BTree key in the root (used when ``Meta.db_table`` changes).
 
 ``add_index()`` / ``remove_index()``
    Create or drop sidecar index metadata and index containers.
 
+This means ``python manage.py migrate`` works out of the box for real deployments
+— the migration framework calls ``SchemaEditor`` methods which in turn issue ZODB
+operations rather than SQL DDL.
+
 The practical effect is that schema evolution behaves more like Python object evolution
 than SQL DDL. Old objects may simply lack a newly added attribute.
+
+Migrations in the test suite
+----------------------------
+
+``DatabaseCreation.create_test_db()`` runs ``migrate --run-syncdb`` after switching
+to in-memory ``MappingStorage``. This ensures the test database is set up exactly
+the same way as a real deployment: all ``OOBTree`` containers are created explicitly
+via ``SchemaEditor`` before any tests run, rather than being created lazily on the
+first write.
+
+Because ``MappingStorage`` lives in RAM, the migration run adds negligible overhead
+and eliminates the need for ``MIGRATION_MODULES`` workarounds. The test settings do
+**not** suppress migrations for any application.
 
 Transactions and savepoints
 ===========================

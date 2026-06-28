@@ -95,16 +95,30 @@ Why test setup is simpler than MongoDB
 ======================================
 
 Tests use in-memory ``MappingStorage`` through the backend's ``DatabaseCreation`` path.
-That means:
+The full setup sequence is:
 
-* no external server process,
-* no separate test database creation step,
-* a fresh in-memory store for each test run.
+1. ``create_test_db()`` calls ``switch_to_test_storage()`` — replaces the configured
+   storage with an in-memory ``MappingStorage``. No disk I/O, no server process.
+2. ``migrate --run-syncdb`` runs against the fresh in-memory store. Django's migration
+   framework calls ``SchemaEditor.create_model()`` for each model, which creates the
+   corresponding ``OOBTree`` in the ZODB root — exactly as ``manage.py migrate``
+   would in a real deployment.
+3. ``mark_expected_failures_and_skips()`` registers the feature-based skip/xfail
+   markers from ``DatabaseFeatures.django_test_skips``.
+
+The result is a fully-initialised, migration-consistent test database that took
+milliseconds to create.
 
 .. tip::
 
-   This is one of the clearest quality-of-life wins of the ZODB approach: contributors can
-   focus on backend behavior instead of database service orchestration.
+   Because schema creation goes through the same ``SchemaEditor`` path as production,
+   running the Django test suite is a continuous integration test of the migration
+   machinery itself — not just the ORM.
+
+Contrast with MongoDB:
+  ``django-mongodb-backend`` requires a real ``mongod`` process and explicitly
+  suppresses migrations for most built-in apps with a large ``MIGRATION_MODULES``
+  dict. Our backend requires neither.
 
 ZEO-specific test job
 =====================
