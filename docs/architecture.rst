@@ -12,16 +12,17 @@ Storage model
 =============
 
 At the root of the database is a ``PersistentMapping``. Each Django model table is stored
-under its ``db_table`` name as a ``BTrees.LOBTree.LOBTree`` mapping integer primary keys
-to persistent row objects.
+under its ``db_table`` name as a ``BTrees.OOBTree.OOBTree`` mapping primary keys to
+persistent row objects. ``OOBTree`` (not ``LOBTree``) is used because Django models can
+have non-integer primary keys — for example Django's session model uses a string key.
 
 A representative layout looks like this:
 
 .. code-block:: text
 
    root (PersistentMapping) = {
-       "auth_user": LOBTree {pk: PersistentMapping({...fields})},
-       "auth_group": LOBTree {pk: PersistentMapping({...fields})},
+       "auth_user": OOBTree {pk: PersistentMapping({...fields})},
+       "auth_group": OOBTree {pk: PersistentMapping({...fields})},
        "__seq_auth_user": Length(42),
        "__seq_auth_group": Length(7),
        "__meta_auth_user": PersistentMapping({
@@ -36,7 +37,7 @@ A representative layout looks like this:
 
 This yields three important implementation properties:
 
-* rows are addressed by 64-bit integer primary key,
+* rows are addressed by primary key (integer or string),
 * table creation is just root-object bookkeeping,
 * secondary indexes can live beside table data rather than in a separate engine.
 
