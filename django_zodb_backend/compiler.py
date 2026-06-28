@@ -184,14 +184,19 @@ class ZODBMixin:
             return True
 
     def _obj_to_dict(self, obj):
-        """Convert a ZODB persistent object to a plain dict."""
-        if isinstance(obj, dict):
-            return obj
-        d = {}
-        for key, val in obj.__dict__.items():
-            if not key.startswith("_p_") and not key.startswith("_v_"):
-                d[key] = val
-        return d
+        """Convert a ZODB stored object to a plain dict."""
+        # PersistentMapping (our primary storage format) supports the mapping
+        # protocol — dict(pm) extracts the stored key/value pairs correctly.
+        try:
+            return dict(obj)
+        except TypeError:
+            pass
+        # Fallback for arbitrary Persistent objects stored by other means.
+        return {
+            k: v
+            for k, v in obj.__dict__.items()
+            if not k.startswith("_p_") and not k.startswith("_v_")
+        }
 
     def _apply_ordering(self, rows, order_by):
         """Sort ``rows`` (list of dicts) by the ORDER BY columns."""
@@ -245,9 +250,10 @@ class SQLCompiler(ZODBMixin, compiler.SQLCompiler):
 
         Django 6.0's ModelIterable reads these as instance attributes
         (not from a pre_sql_setup() return value), so we must set them
-        before returning from execute_sql().  We try calling the parent's
-        pre_sql_setup() first (it builds the SQL AST which is harmless),
-        and fall back to a minimal manual setup if it raises.
+        before returning from execute_sql().
+
+        self.select is a list of 3-tuples (expression, (sql, params), alias)
+        as set by SQLCompiler.get_select() / setup_query().
         """
         try:
             self.pre_sql_setup()
@@ -258,26 +264,28 @@ class SQLCompiler(ZODBMixin, compiler.SQLCompiler):
         if getattr(self, "klass_info", None) is None and self.query.model is not None:
             meta = self.query.get_meta()
             fields = meta.concrete_fields
-            # Build minimal select list matching concrete fields.
             if not getattr(self, "select", None):
-                self.select = [(f.col, None) for f in fields]
+                # Build minimal 3-tuples matching the format from get_select().
+                self.select = [(f.col, (f"t.{f.column}", ()), None) for f in fields]
             self.klass_info = {
                 "model": self.query.model,
-                "select_fields": range(len(fields)),
+                "select_fields": list(range(len(fields))),
             }
-        if not hasattr(self, "annotation_col_map"):
+        if not hasattr(self, "annotation_col_map") or self.annotation_col_map is None:
             self.annotation_col_map = {}
 
     def _select_columns(self):
         """
         Return column names in the order of self.select.
 
-        self.select is set by pre_sql_setup() as a list of (Col, alias)
-        pairs; each Col has a .target field with a .column attribute.
+        self.select entries are 3-tuples (expression, (sql, params), alias)
+        where expression is a Col with a .target field whose .column gives
+        the DB column name.
         """
         if getattr(self, "select", None):
             cols = []
-            for col_expr, _ in self.select:
+            for entry in self.select:
+                col_expr = entry[0]  # (col_expr, (sql, params), alias)
                 name = (
                     getattr(getattr(col_expr, "target", None), "column", None)
                     or getattr(col_expr, "alias", None)
