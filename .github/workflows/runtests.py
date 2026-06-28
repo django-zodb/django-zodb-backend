@@ -17,14 +17,14 @@ used by django-mongodb-backend) takes 60–90 minutes. We instead:
 With 8 shards × 4 vCPUs each the full suite runs in ~8–12 minutes on CI.
 
 Shard selection is controlled by two environment variables set by CI:
-  DJANGO_TEST_SHARD        integer 0-based index of this shard  (default: 0)
-  DJANGO_TEST_SHARDS       total number of shards               (default: 1)
+  DJANGO_TEST_PART        integer 0-based index of this shard  (default: 0)
+  DJANGO_TEST_PARTS       total number of shards               (default: 1)
 
 To run locally without sharding:
   python runtests_.py
 
 To simulate a specific shard locally:
-  DJANGO_TEST_SHARD=2 DJANGO_TEST_SHARDS=8 python runtests_.py
+  DJANGO_TEST_PART=2 DJANGO_TEST_PARTS=8 python runtests_.py
 """
 
 import os
@@ -196,8 +196,8 @@ test_apps = [
 ]
 
 # ── Shard selection ──────────────────────────────────────────────────────────
-shard_index = int(os.environ.get("DJANGO_TEST_SHARD", "0"))
-shard_count = int(os.environ.get("DJANGO_TEST_SHARDS", "1"))
+shard_index = int(os.environ.get("DJANGO_TEST_PART", "0"))
+shard_count = int(os.environ.get("DJANGO_TEST_PARTS", "1"))
 
 apps_for_shard = [app for i, app in enumerate(test_apps) if i % shard_count == shard_index]
 

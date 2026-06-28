@@ -31,13 +31,13 @@ defaults:
 
 jobs:
   test:
-    name: "Tests (shard ${{ matrix.shard }}/8, py${{ matrix.python-version }})"
+    name: "Django test suite (part ${{ matrix.part }} of 8, py${{ matrix.python-version }})"
     runs-on: ubuntu-latest
     strategy:
-      fail-fast: false   # let all shards finish so we see the full picture
+      fail-fast: false   # run all parts so we see the full picture
       matrix:
         python-version: ["3.13"]
-        shard: [0, 1, 2, 3, 4, 5, 6, 7]
+        part: [0, 1, 2, 3, 4, 5, 6, 7]
 
     steps:
       - name: Checkout django-zodb-backend
@@ -80,10 +80,10 @@ jobs:
           cp .github/workflows/zodb_settings.py django_repo/tests/
           cp .github/workflows/runtests.py django_repo/tests/runtests_.py
 
-      - name: Run shard ${{ matrix.shard }}
+      - name: Run part ${{ matrix.part }} of Django test suite
         env:
-          DJANGO_TEST_SHARD: ${{ matrix.shard }}
-          DJANGO_TEST_SHARDS: 8
+          DJANGO_TEST_PART: ${{ matrix.part }}
+          DJANGO_TEST_PARTS: 8
         run: python django_repo/tests/runtests_.py
 
     permissions:
@@ -100,9 +100,9 @@ jobs:
       - run: |
           result="${{ needs.test.result }}"
           if [[ "$result" == "success" ]]; then
-            echo "All shards passed."
+            echo "All parts passed."
           else
-            echo "One or more shards failed (result: $result)."
+            echo "One or more parts failed (result: $result)."
             exit 1
           fi
     permissions:
