@@ -9,12 +9,16 @@ used by django-mongodb-backend) takes 60–90 minutes. We instead:
 
 1. Pass ALL apps in the shard to a single ``runtests.py`` invocation, which
    means only one Python/Django startup per shard.
-2. Add ``--parallel`` so Django distributes test *cases* across CPU cores
-   within each job.
-3. Split the app list into N shards via a GitHub Actions matrix, giving N
-   parallel jobs.
+2. Split the app list into N shards via a GitHub Actions matrix, giving N
+   parallel jobs (currently 8).
 
-With 8 shards × 4 vCPUs each the full suite runs in ~8–12 minutes on CI.
+Note: ``--parallel`` is intentionally NOT used. ZODB's ``MappingStorage`` is
+an in-process Python dict. When Django forks workers for ``--parallel``, each
+worker inherits the parent's ``ZODB.DB`` connection and transaction state.
+Savepoint isolation then breaks across workers: BTree mutations in one worker
+bleed into others, causing ``MultipleObjectsReturned`` and similar failures.
+The 8-shard matrix already runs shards in parallel on separate CI runners, so
+omitting ``--parallel`` costs no extra wall-clock time.
 
 Shard selection is controlled by two environment variables set by CI:
   DJANGO_TEST_PART        integer 0-based index of this shard  (default: 0)
@@ -213,9 +217,15 @@ print(
     + (f"… (+{len(apps_for_shard) - 5} more)" if len(apps_for_shard) > 5 else "")
 )
 
-# ── Single runtests.py call with --parallel ──────────────────────────────────
-# Pass all shard apps in one invocation: one Django startup, --parallel
-# distributes test cases across vCPUs.
+# ── Single runtests.py call ───────────────────────────────────────────────────
+# Pass all shard apps in one invocation: one Django startup.
+# Note: --parallel is intentionally omitted. ZODB's MappingStorage is an
+# in-process Python dict; after os.fork() the child inherits the parent's
+# ZODB.DB object including its open connections and transaction state. This
+# causes savepoint isolation to break across parallel workers — tests from
+# one worker contaminate the BTree state seen by another. Sequential execution
+# within each shard avoids this. The 8-shard matrix still runs shards in
+# parallel on separate runners, giving the wall-clock benefit.
 runtests = pathlib.Path(__file__).parent.resolve() / "runtests.py"
 
 cmd = [
@@ -223,7 +233,6 @@ cmd = [
     str(runtests),
     "--settings",
     "zodb_settings",
-    "--parallel",
     "-v",
     "2",
     *apps_for_shard,

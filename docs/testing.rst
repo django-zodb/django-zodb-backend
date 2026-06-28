@@ -44,29 +44,35 @@ subprocesses (the approach used by ``django-mongodb-backend``) means:
 * 146 Django ``setup()`` calls,
 * typical wall-clock time: **60–90 minutes**.
 
-We take a different approach: **matrix sharding with ``--parallel``**.
+We take a different approach: **matrix sharding without** ``--parallel``.
 
 .. code-block:: text
 
    ┌─ GitHub Actions matrix ─────────────────────────────────────────────┐
-   │  shard 0: apps[0], apps[8], apps[16], …  →  runtests.py --parallel  │
-   │  shard 1: apps[1], apps[9], apps[17], …  →  runtests.py --parallel  │
+   │  shard 0: apps[0], apps[8], apps[16], …  →  runtests.py (sequential)│
+   │  shard 1: apps[1], apps[9], apps[17], …  →  runtests.py (sequential)│
    │  …                                                                   │
-   │  shard 7: apps[7], apps[15], apps[23], … →  runtests.py --parallel  │
+   │  shard 7: apps[7], apps[15], apps[23], … →  runtests.py (sequential)│
    └─────────────────────────────────────────────────────────────────────┘
 
-Each shard:
+Each shard passes **all its apps in a single** ``runtests.py`` call — one
+startup, not N.
 
-1. Passes **all its apps in a single** ``runtests.py`` call — one startup, not N.
-2. Adds ``--parallel`` so Django's test runner distributes test cases across
-   the 4 vCPUs available on the GitHub-hosted runner.
+Why not ``--parallel``?
+-----------------------
 
-Result: **~8–12 minutes** for the full suite (16 total matrix jobs across 2
-Python versions × 8 shards), versus 60–90 minutes sequentially.
+ZODB's ``MappingStorage`` is a pure-Python in-process dict. When Django forks
+worker processes for ``--parallel``, each worker inherits the parent's
+``ZODB.DB`` object, including its open connections and transaction state.
+Savepoint isolation then breaks: BTree mutations in one worker's transaction
+bleed into others, causing ``MultipleObjectsReturned`` and related failures.
+
+The 8-shard matrix already runs shards in parallel on separate GitHub-hosted
+runners, so omitting ``--parallel`` costs no extra wall-clock time.
 
 .. list-table:: Comparison of CI strategies
    :header-rows: 1
-   :widths: 25 25 25 25
+   :widths: 25 30 20 25
 
    * - Strategy
      - Approach
@@ -81,9 +87,9 @@ Python versions × 8 shards), versus 60–90 minutes sequentially.
      - 1
      - 30–45 min
    * - **django-zodb (current)**
-     - **8 shards × 1 subprocess, --parallel**
+     - **8 shards × 1 subprocess**
      - **1 per shard**
-     - **~8–12 min**
+     - **~15–25 min**
 
 .. note::
 
