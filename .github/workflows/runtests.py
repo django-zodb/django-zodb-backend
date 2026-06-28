@@ -195,18 +195,20 @@ test_apps = [
     ),
 ]
 
-# ── Shard selection ──────────────────────────────────────────────────────────
-shard_index = int(os.environ.get("DJANGO_TEST_PART", "0"))
-shard_count = int(os.environ.get("DJANGO_TEST_PARTS", "1"))
+# ── Part selection ───────────────────────────────────────────────────────────
+# Parts are 1-based (1–8) for human-readable CI job names.
+part_number = int(os.environ.get("DJANGO_TEST_PART", "1"))
+part_count = int(os.environ.get("DJANGO_TEST_PARTS", "1"))
+part_index = part_number - 1  # convert to 0-based for modulo
 
-apps_for_shard = [app for i, app in enumerate(test_apps) if i % shard_count == shard_index]
+apps_for_shard = [app for i, app in enumerate(test_apps) if i % part_count == part_index]
 
 if not apps_for_shard:
-    print(f"Shard {shard_index}/{shard_count}: no apps to run.")
+    print(f"Part {part_number}/{part_count}: no apps to run.")
     sys.exit(0)
 
 print(
-    f"Shard {shard_index + 1}/{shard_count}: "
+    f"Part {part_number}/{part_count}: "
     f"running {len(apps_for_shard)} apps: {', '.join(apps_for_shard[:5])}"
     + (f"… (+{len(apps_for_shard) - 5} more)" if len(apps_for_shard) > 5 else "")
 )
