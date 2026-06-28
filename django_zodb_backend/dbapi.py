@@ -22,3 +22,7 @@ from django.db import (  # noqa: F401
 apilevel = "2.0"
 threadsafety = 1
 paramstyle = "format"
+
+# DB-API 2.0 requires a Binary constructor for binary data.
+# ZODB stores Python objects natively, so bytes suffices.
+Binary = bytes

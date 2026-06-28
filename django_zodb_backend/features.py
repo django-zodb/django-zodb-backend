@@ -110,7 +110,7 @@ class DatabaseFeatures(BaseDatabaseFeatures):
             "schema.tests.SchemaTests.test_rename_table_renames_deferred_sql_references",
         },
         "Test checks str(queryset.query) for SQL.": {
-            "aggregation_regress.tests.AggregationTests.test_more_more5",
+            "aggregation_regress.tests.AggregationTests.test_more_more",
             "aggregation_regress.tests.AggregationTests.test_reverse_join_trimming",
             "aggregation_regress.tests.JoinPromotionTests",
             "custom_lookups.tests.YearLteTests",
@@ -224,6 +224,11 @@ class DatabaseFeatures(BaseDatabaseFeatures):
             "migration_test_data_persistence.tests.MigrationDataPersistenceTestCase",
             "migration_test_data_persistence.tests.MigrationDataPersistenceClassSetup",
             "migration_test_data_persistence.tests.MigrationDataNormalPersistenceTestCase",
+        },
+        # ── Constraints (DB-level enforcement) ───────────────────────────────
+        "Database-level constraint enforcement is not supported in ZODB.": {
+            "constraints.tests.CheckConstraintTests",
+            "constraints.tests.UniqueConstraintTests",
         },
         # ── Database defaults ─────────────────────────────────────────────────
         "Database-level defaults are not supported.": {

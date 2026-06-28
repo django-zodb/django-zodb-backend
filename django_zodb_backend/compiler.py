@@ -39,9 +39,11 @@ class ZODBMixin:
     """Shared helpers for all ZODB compiler classes."""
 
     def _get_btree(self):
-        """Return the OOBTree for the query's base table."""
-        table = self.query.get_meta().db_table
-        return self.connection.get_btree(table)
+        """Return the OOBTree for the query's base table, or None if unavailable."""
+        meta = self.query.get_meta()
+        if meta is None:
+            return None
+        return self.connection.get_btree(meta.db_table)
 
     def _row_matches_where(self, obj_dict, where_node):
         """
@@ -558,6 +560,10 @@ class SQLUpdateCompiler(ZODBMixin, compiler.SQLUpdateCompiler):
             if self._row_matches_where(row, where):
                 for field, _model, value in self.query.values:
                     col = field.column
+                    # Django 6+ stores raw model instances in query.values for
+                    # FK fields; extract the pk before get_db_prep_save.
+                    if hasattr(value, "pk") and hasattr(value, "_meta"):
+                        value = value.pk
                     db_val = field.get_db_prep_save(value, connection=self.connection)
                     obj[col] = db_val
                     obj._p_changed = True
