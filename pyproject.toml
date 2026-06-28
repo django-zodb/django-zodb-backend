@@ -1,0 +1,69 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "django-zodb-backend"
+version = "0.1.0.dev0"
+description = "Django ZODB Backend"
+readme = "README.md"
+license = {file = "LICENSE"}
+requires-python = ">=3.12"
+authors = [
+    { name = "django-zodb contributors" },
+]
+keywords = ["zodb", "django", "database", "backend", "object-database"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Framework :: Django",
+    "Framework :: Django :: 6.0",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: BSD License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+dependencies = [
+    "django>=6.0",
+    "ZODB>=6.0",
+    "BTrees>=6.0",
+    "persistent>=6.0",
+    "transaction>=5.0",
+]
+
+[project.optional-dependencies]
+filestorage = [
+    "ZODB>=6.0",
+]
+zeo = [
+    "ZEO>=6.0",
+]
+relstorage = [
+    "RelStorage>=4.0",
+]
+docs = [
+    "sphinx>=7",
+    "furo",
+    "sphinx-copybutton",
+]
+dev = [
+    "ruff",
+]
+
+[project.urls]
+Homepage = "https://github.com/django-zodb/django-zodb-backend"
+Documentation = "https://django-zodb-backend.readthedocs.io"
+Source = "https://github.com/django-zodb/django-zodb-backend"
+Tracker = "https://github.com/django-zodb/django-zodb-backend/issues"
+
+[tool.hatch.version]
+path = "django_zodb_backend/__init__.py"
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B", "I", "UP"]
+ignore = ["S101", "RUF012"]
