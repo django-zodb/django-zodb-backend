@@ -201,22 +201,25 @@ class ZODBMixin:
         }
 
     def _apply_ordering(self, rows, order_by):
-        """Sort ``rows`` (list of dicts) by the ORDER BY columns."""
+        """Sort ``rows`` (list of dicts) by the ORDER BY columns.
+
+        Each entry in order_by is (col, descending, nulls_first) where
+        nulls_first=True puts None values first, False puts them last.
+        """
         if not order_by:
             return rows
         import functools
 
         def comparator(a, b):
-            for col, desc in order_by:
+            for col, desc, nulls_first in order_by:
                 av = a.get(col)
                 bv = b.get(col)
-                # Handle None: NULLs last (SQL default).
                 if av is None and bv is None:
                     continue
                 if av is None:
-                    return 1
+                    return -1 if nulls_first else 1
                 if bv is None:
-                    return -1
+                    return 1 if nulls_first else -1
                 try:
                     result = (av > bv) - (av < bv)
                 except TypeError:
@@ -230,7 +233,7 @@ class ZODBMixin:
         return sorted(rows, key=functools.cmp_to_key(comparator))
 
     def _parse_order_by(self):
-        """Extract (column_name, is_descending) pairs from the query."""
+        """Extract (column_name, is_descending, nulls_first) triples from the query."""
         from django.db.models.expressions import OrderBy
 
         order_by = []
@@ -239,7 +242,16 @@ class ZODBMixin:
                 source = expr.expression
                 col_name = getattr(getattr(source, "target", None), "column", None)
                 if col_name:
-                    order_by.append((col_name, expr.descending))
+                    # Determine effective nulls placement:
+                    # explicit nulls_first/nulls_last override SQL defaults.
+                    if expr.nulls_first:
+                        nulls_first = True
+                    elif expr.nulls_last:
+                        nulls_first = False
+                    else:
+                        # SQL default: nulls last for ASC, nulls first for DESC.
+                        nulls_first = expr.descending
+                    order_by.append((col_name, expr.descending, nulls_first))
         return order_by
 
 
