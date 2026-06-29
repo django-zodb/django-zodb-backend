@@ -45,8 +45,9 @@ Those changes are exactly why the MongoDB project carries a substantial Django f
 ZODB
 ----
 
-ZODB is a much better fit for Django's normal integer-key assumptions. ``BTrees.LOBTree``
-uses 64-bit integer keys, so the backend can keep Django's standard ``BigAutoField``.
+ZODB is a much better fit for Django's normal integer-key assumptions. ``OOBTree``
+accepts any Python object as a key, and integer PKs map efficiently onto its B-tree
+structure. The backend can therefore keep Django's standard ``BigAutoField``.
 That yields immediate benefits:
 
 * no ``GenericForeignKey.object_id`` type changes,

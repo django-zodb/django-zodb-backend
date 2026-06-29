@@ -16,12 +16,21 @@ traversal and sorted BTree containers.
 
 ## Architecture Overview
 
-This backend adapts Django's ORM to ZODB by:
+This backend is modelled after `django-mongodb-backend` but makes one critical
+trade-off in the opposite direction: instead of translating Django's SQL abstract
+syntax tree into another query language, it keeps Django's query construction
+completely intact and performs execution directly against ZODB data structures.
 
-- Storing each model's instances in a `BTrees.LOBTree.LOBTree` (pk → object)
-- Maintaining secondary BTree indexes for filtered lookups
-- Translating Django `Q()` filters into BTree range scans and set intersections
-- Wrapping ZODB transactions in Django's `atomic()` protocol
+In short: Django builds the query; the backend runs it.
+
+- Each model's instances are stored in a `BTrees.OOBTree.OOBTree` (pk → object)
+- `WHERE` clauses are evaluated as Python predicates against each stored object
+- FK and M2M JOINs are resolved by walking Django's `alias_map` in Python
+- Ordering, slicing, and aggregates are computed in Python
+- ZODB transactions are wrapped in Django's `atomic()` protocol
+
+This approach is the right fit for ZODB because ZODB has no query engine of its own.
+The Python scan *is* the execution model.
 
 ## Quick Start
 

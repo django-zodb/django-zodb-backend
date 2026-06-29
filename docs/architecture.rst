@@ -5,8 +5,12 @@ Architecture
 ============
 
 This backend adapts Django's ORM to ZODB without pretending ZODB is a relational
-database. Instead, it preserves Django's higher-level machinery and replaces SQL
-execution with Python-level evaluation over persistent object containers.
+database. It makes one critical trade-off in the opposite direction from
+``django-mongodb-backend``: instead of translating Django's SQL abstract syntax tree
+into another query language, it keeps Django's query construction completely intact and
+performs execution directly against ZODB data structures.
+
+In short: Django builds the query; the backend runs it.
 
 Storage model
 =============
@@ -69,8 +73,9 @@ The flow is:
 
 #. Django builds its normal ``Query`` / SQL AST structures.
 #. The backend compiler receives the compiled query.
-#. Instead of issuing SQL, the compiler iterates the model's ``LOBTree`` values.
+#. Instead of issuing SQL, the compiler iterates the model's ``OOBTree`` values.
 #. The ``WHERE`` tree is evaluated as Python predicates against each object.
+#. JOIN traversal follows the ``alias_map`` chain recorded by Django's query planner.
 #. Ordering and slicing are applied in Python.
 
 This is very different from ``django-mongodb-backend``, which translates Django's SQL AST
@@ -80,17 +85,53 @@ into MongoDB Query Language and aggregation pipelines. The comparison is explore
 Current compiler behavior
 -------------------------
 
-The prototype compiler handles common lookup classes such as:
+The compiler handles the complete Django ORM lookup surface required to pass the
+Django test suite:
+
+**Lookups**
 
 * ``exact`` / ``iexact``
 * ``in`` / ``isnull``
-* comparison operators (``gt``, ``gte``, ``lt``, ``lte``)
-* ranges
-* substring and prefix/suffix lookups
-* regular expressions
+* comparison operators: ``gt``, ``gte``, ``lt``, ``lte``, ``range``
+* substring and affix lookups: ``contains``, ``icontains``, ``startswith``,
+  ``istartswith``, ``endswith``, ``iendswith``
+* regular expressions: ``regex``, ``iregex``
+* date-part lookups: ``year``, ``month``, ``day``, ``week``, ``hour``,
+  ``minute``, ``second``
 
-The key implementation advantage is conceptual simplicity. The main cost is performance:
-queries currently walk candidate rows in Python instead of using a native query planner.
+**JOIN traversal**
+
+For FK and M2M relationships, the compiler walks Django's ``alias_map`` chain
+to resolve cross-table column references. A key correctness detail: for AND
+conditions within a single ``.filter()`` call, the backend expands the M2M
+relationship into *virtual rows* — one per joined object — and verifies that at
+least one virtual row satisfies all conditions simultaneously. This matches SQL
+single-JOIN semantics.
+
+**Expressions and annotations**
+
+* ``Col`` references (main table and joined tables)
+* ``F()`` expressions
+* ``Value`` constants
+* ``Trunc`` / date truncation (``year``, ``month``, ``week``, ``day``, etc.)
+* ``Cast`` with output field coercion
+* ``Ref`` — references to ``.alias()`` or ``.annotate()`` expressions
+* ``Exists(subquery)`` with correlated ``OuterRef`` resolution
+* Aggregate annotations: ``Count``, ``Sum``, ``Max``, ``Min``, ``Avg``
+
+**Aggregation**
+
+* ``SQLAggregateCompiler`` handles both simple aggregate queries and the
+  ``AggregateQuery(inner_query=…)`` pattern Django uses for ``DISTINCT`` counts.
+
+**DML**
+
+* INSERT, UPDATE, DELETE all operate on ZODB BTrees directly and commit
+  via the ``transaction`` package.
+
+The key implementation advantage is conceptual simplicity: every query is just
+Python iterating over Python objects. The main cost is performance — queries
+currently walk candidate rows instead of using a native query planner.
 
 .. warning::
 

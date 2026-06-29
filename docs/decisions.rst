@@ -21,8 +21,8 @@ A non-SQL backend must decide whether to preserve Django's default integer prima
 or adopt a datastore-native identifier type.
 
 MongoDB chose datastore-native ``ObjectId`` values, which forced significant Django test
-fork changes. ZODB does not create that pressure because ``BTrees.LOBTree`` already uses
-64-bit integer keys efficiently.
+fork changes. ZODB does not create that pressure because ``OOBTree`` accepts integer keys
+natively and they map efficiently to B-tree storage.
 
 Decision
 --------
@@ -66,7 +66,7 @@ Decision
 --------
 
 Allow Django to build its SQL AST normally, then evaluate the resulting predicates in
-Python against objects loaded from the table ``LOBTree``.
+Python against objects loaded from the table ``OOBTree``.
 
 Consequences
 ------------
