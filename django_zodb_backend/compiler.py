@@ -49,6 +49,11 @@ class ZODBMixin:
         """Return the OOBTree for any table by name, or None if unavailable."""
         return self.connection.get_btree(table_name)
 
+    def _log_query(self, sql="ZODB query"):
+        """Append a synthetic query log entry for assertNumQueries support."""
+        if self.connection.queries_logged:
+            self.connection.queries_log.append({"sql": sql, "time": "0"})
+
     def _eval_exists(self, exists_expr, outer_row):
         """
         Evaluate an ``Exists(subquery)`` expression against the current outer
@@ -164,12 +169,18 @@ class ZODBMixin:
         except Exception:
             return None
 
-    def _resolve_joined_col(self, row, target_alias, col_name):
+    def _resolve_joined_col(self, row, target_alias, col_name, _pinned=None):
         """
         Resolve a column that lives in a JOINed table rather than the main
         query table.  Returns a (possibly empty) list of all values for
         ``col_name`` reachable from the current ``row`` by following the
         join-chain recorded in ``self.query.alias_map``.
+
+        When ``_pinned`` maps ``target_alias`` to a single row dict, skip the
+        full traversal and return that pinned row's column value directly.
+        This is used by the AND-node join-expansion logic in
+        ``_row_matches_where``.
+
 
         For example, for ``Permission.objects.filter(user=user_obj)`` the
         main table is ``auth_permission`` and the WHERE references
@@ -177,6 +188,13 @@ class ZODBMixin:
         table in the ZODB store and return the user_ids linked to the
         permission in ``row``.
         """
+        # If this alias is pinned to a specific row, use it directly.
+        if _pinned and target_alias in _pinned:
+            pinned_row = _pinned[target_alias]
+            if pinned_row is None:
+                return []
+            return [pinned_row.get(col_name)]
+
         alias_map = getattr(self.query, "alias_map", {})
         main_table = self.query.get_meta().db_table
 
@@ -223,7 +241,70 @@ class ZODBMixin:
 
         return [r.get(col_name) for r in current_rows]
 
-    def _row_matches_where(self, obj_dict, where_node):
+    def _resolve_joined_rows(self, row, target_alias):
+        """
+        Like ``_resolve_joined_col`` but returns full row dicts for each
+        related object reachable at ``target_alias`` from ``row``.
+
+        Used by the AND-expansion logic in ``_row_matches_where`` to build
+        virtual rows for M2M/FK join evaluation.
+        """
+        alias_map = getattr(self.query, "alias_map", {})
+        main_table = self.query.get_meta().db_table
+
+        if target_alias == main_table:
+            return [row]
+
+        path = []
+        alias = target_alias
+        visited = set()
+        while alias and alias != main_table:
+            if alias in visited or alias not in alias_map:
+                return []
+            visited.add(alias)
+            join = alias_map[alias]
+            path.insert(0, join)
+            alias = join.parent_alias
+
+        current_rows = [row]
+        for join in path:
+            if not hasattr(join, "join_cols"):
+                continue
+            rhs_btree = self._get_btree_for_table(join.table_name)
+            if rhs_btree is None:
+                return []
+            next_rows = []
+            for current_row in current_rows:
+                for rhs_obj in rhs_btree.values():
+                    rhs_dict = self._obj_to_dict(rhs_obj)
+                    if all(
+                        rhs_dict.get(rhs_col) == current_row.get(lhs_col)
+                        for lhs_col, rhs_col in join.join_cols
+                    ):
+                        next_rows.append(rhs_dict)
+            current_rows = next_rows
+
+        return current_rows
+
+    def _collect_join_aliases(self, where_node):
+        """
+        Recursively collect all table aliases referenced by Col expressions in
+        a WhereNode tree.  Used to identify which join tables need virtual-row
+        expansion in ``_row_matches_where``.
+        """
+        aliases = set()
+        if where_node is None:
+            return aliases
+        if hasattr(where_node, "children"):
+            for child in where_node.children:
+                aliases |= self._collect_join_aliases(child)
+        elif hasattr(where_node, "lhs"):
+            alias = getattr(where_node.lhs, "alias", None)
+            if alias:
+                aliases.add(alias)
+        return aliases
+
+    def _row_matches_where(self, obj_dict, where_node, _pinned=None):
         """
         Evaluate a WhereNode against an object represented as a plain dict.
 
@@ -231,6 +312,12 @@ class ZODBMixin:
         It handles the most common lookup types (exact, gt, lt, in, isnull,
         startswith, contains, etc.).  Unsupported lookups raise
         NotSupportedError so tests are correctly skipped.
+
+        For AND nodes at the top level (``_pinned is None``), we expand cross-
+        table joins into virtual rows (one per M2M/FK combination) and check
+        that at least one virtual row satisfies ALL AND conditions.  This
+        matches SQL JOIN semantics where all conditions in a single ``filter()``
+        call must be satisfied by the SAME joined row.
         """
         if where_node is None or not where_node.children:
             return True
@@ -242,21 +329,58 @@ class ZODBMixin:
         connector = where_node.connector
         negated = where_node.negated
 
-        results = []
-        for child in where_node.children:
-            if isinstance(child, NothingNode):
-                result = False
-            else:
-                from django.db.models.expressions import Exists
+        # For AND nodes, expand cross-table aliases into virtual rows so that
+        # all conditions referencing the SAME join alias are checked against the
+        # SAME joined row (matching SQL single-filter semantics).
+        if connector == AND and _pinned is None:
+            main_table = self.query.get_meta().db_table
+            all_aliases = self._collect_join_aliases(where_node)
+            alias_map = getattr(self.query, "alias_map", {})
+            cross_aliases = [
+                a
+                for a in all_aliases
+                if a != main_table and a in alias_map and hasattr(alias_map[a], "join_cols")
+            ]
+            if cross_aliases:
+                from itertools import product as iproduct
 
-                if isinstance(child, Exists):
-                    result = self._eval_exists(child, obj_dict)
-                elif hasattr(child, "children"):
-                    # Nested WhereNode.
-                    result = self._row_matches_where(obj_dict, child)
-                else:
-                    result = self._eval_lookup(obj_dict, child)
-            results.append(result)
+                rows_per_alias = {}
+                for alias in cross_aliases:
+                    related = self._resolve_joined_rows(obj_dict, alias)
+                    rows_per_alias[alias] = related if related else [None]
+
+                alias_list = sorted(rows_per_alias.keys())
+                combos = list(iproduct(*(rows_per_alias[a] for a in alias_list)))
+
+                def eval_child_pinned(child, pin):
+                    from django.db.models.expressions import Exists
+
+                    if isinstance(child, NothingNode):
+                        return False
+                    if isinstance(child, Exists):
+                        return self._eval_exists(child, obj_dict)
+                    if hasattr(child, "children"):
+                        return self._row_matches_where(obj_dict, child, _pinned=pin)
+                    return self._eval_lookup(obj_dict, child, _pinned=pin)
+
+                for combo in combos:
+                    pin = {alias_list[i]: combo[i] for i in range(len(alias_list))}
+                    if all(eval_child_pinned(c, pin) for c in where_node.children):
+                        return not negated
+                return negated
+
+        def eval_child(child):
+            from django.db.models.expressions import Exists
+
+            if isinstance(child, NothingNode):
+                return False
+            if isinstance(child, Exists):
+                return self._eval_exists(child, obj_dict)
+            if hasattr(child, "children"):
+                return self._row_matches_where(obj_dict, child, _pinned=_pinned)
+            return self._eval_lookup(obj_dict, child, _pinned=_pinned)
+
+        results = [eval_child(c) for c in where_node.children]
 
         if connector == AND:
             match = all(results)
@@ -372,9 +496,66 @@ class ZODBMixin:
         if isinstance(expr, Value):
             return expr.value
 
+        # Ref: reference to a query alias/annotation. Evaluate the source.
+        from django.db.models.expressions import Ref
+
+        if isinstance(expr, Ref):
+            src = getattr(expr, "source", None)
+            if src is not None:
+                return self._eval_select_expr(src, row_dict)
+            # Fall back to resolving named annotation from query.annotations.
+            annotation = getattr(self.query, "annotations", {}).get(expr.refs)
+            if annotation is not None:
+                return self._eval_select_expr(annotation, row_dict)
+            return None
+
+        # Cast / Func expressions: evaluate the first source expression and
+        # optionally coerce the type to match the output field.
+        from django.db.models.functions import Cast
+
+        if isinstance(expr, Cast):
+            src_exprs = getattr(expr, "source_expressions", None) or []
+            if src_exprs:
+                val = self._eval_select_expr(src_exprs[0], row_dict)
+                if val is None:
+                    return None
+                # Coerce to the output field's Python type.
+                try:
+                    out_field = getattr(expr, "output_field", None)
+                    if out_field is not None:
+                        val = out_field.to_python(val)
+                except Exception:
+                    pass
+                return val
+            return None
+
+        # Generic Func: evaluate the first source expression (best-effort).
+        from django.db.models.expressions import Func
+
+        if isinstance(expr, Func):
+            src_exprs = getattr(expr, "source_expressions", None) or []
+            if src_exprs:
+                return self._eval_select_expr(src_exprs[0], row_dict)
+            return None
+
+        # Aggregate expressions (Max, Min, Sum, Avg, Count) used as row
+        # annotations — for non-grouped queries each row is its own group, so
+        # the aggregate over a single row is the row's own field value.
+        from django.db.models import Count
+        from django.db.models.aggregates import Aggregate
+
+        if isinstance(expr, Aggregate):
+            source_exprs = getattr(expr, "get_source_expressions", lambda: [])()
+            if source_exprs:
+                src_val = self._eval_select_expr(source_exprs[0], row_dict)
+                if isinstance(expr, Count):
+                    return 0 if src_val is None else 1
+                return src_val
+            return None
+
         return None
 
-    def _eval_lookup(self, obj_dict, lookup):
+    def _eval_lookup(self, obj_dict, lookup, _pinned=None):
         """Evaluate a single Lookup against ``obj_dict``."""
         from django.db.models.expressions import Col, Value
         from django.db.models.lookups import (
@@ -434,12 +615,16 @@ class ZODBMixin:
                 col_obj = inner if isinstance(inner, Col) else None
                 col_table_alias = getattr(col_obj, "alias", None) if col_obj else None
             else:
-                # Could be an annotation expression (F, Trunc, etc.) with
-                # source_expressions.  Try evaluating it directly.
+                # Could be an annotation expression (F, Trunc, Cast, Ref, etc.)
+                # with source_expressions.  Try evaluating it directly.
                 obj_value = self._eval_select_expr(lhs, obj_dict)
                 # Fall through with obj_value already set; set col_name to a
                 # sentinel so we skip obj_dict.get() below.
                 col_name = "__EXPR__"
+        elif hasattr(lhs, "source_expressions"):
+            # Func/Cast etc. with source_expressions but no 'lhs' attribute.
+            obj_value = self._eval_select_expr(lhs, obj_dict)
+            col_name = "__EXPR__"
         else:
             col_name = None
 
@@ -462,7 +647,9 @@ class ZODBMixin:
                 and getattr(self.query, "alias_map", None)
             ):
                 # Cross-table column — resolve via the join chain.
-                joined_values = self._resolve_joined_col(obj_dict, col_table_alias, col_name)
+                joined_values = self._resolve_joined_col(
+                    obj_dict, col_table_alias, col_name, _pinned=_pinned
+                )
                 obj_value = joined_values[0] if joined_values else None
             else:
                 obj_value = obj_dict.get(col_name)
@@ -533,7 +720,7 @@ class ZODBMixin:
         if isinstance(lookup, Exact):
             return obj_value == rhs
         elif isinstance(lookup, IExact):
-            return (obj_value or "").lower() == (rhs or "").lower()
+            return str(obj_value or "").lower() == str(rhs or "").lower()
         elif isinstance(lookup, In):
             return obj_value in rhs
         elif isinstance(lookup, IsNull):
@@ -550,25 +737,33 @@ class ZODBMixin:
             lo, hi = rhs
             return obj_value is not None and lo <= obj_value <= hi
         elif isinstance(lookup, IContains):
-            return (rhs or "").lower() in (obj_value or "").lower()
+            return str(rhs or "").lower() in str(obj_value if obj_value is not None else "").lower()
         elif isinstance(lookup, Contains):
-            return rhs in (obj_value or "")
+            return str(rhs) in str(obj_value if obj_value is not None else "")
         elif isinstance(lookup, IStartsWith):
-            return (obj_value or "").lower().startswith((rhs or "").lower())
+            return (
+                str(obj_value if obj_value is not None else "")
+                .lower()
+                .startswith(str(rhs or "").lower())
+            )
         elif isinstance(lookup, StartsWith):
-            return (obj_value or "").startswith(rhs or "")
+            return str(obj_value if obj_value is not None else "").startswith(str(rhs or ""))
         elif isinstance(lookup, IEndsWith):
-            return (obj_value or "").lower().endswith((rhs or "").lower())
+            return (
+                str(obj_value if obj_value is not None else "")
+                .lower()
+                .endswith(str(rhs or "").lower())
+            )
         elif isinstance(lookup, EndsWith):
-            return (obj_value or "").endswith(rhs or "")
+            return str(obj_value if obj_value is not None else "").endswith(str(rhs or ""))
         elif isinstance(lookup, IRegex):
             import re
 
-            return bool(re.search(rhs, obj_value or "", re.IGNORECASE))
+            return bool(re.search(rhs, str(obj_value or ""), re.IGNORECASE))
         elif isinstance(lookup, Regex):
             import re
 
-            return bool(re.search(rhs, obj_value or ""))
+            return bool(re.search(rhs, str(obj_value or "")))
         else:
             # Unknown lookup — conservative pass-through.
             return True
@@ -614,7 +809,7 @@ class ZODBMixin:
             if isinstance(lookup, Exact):
                 return v == rhs
             elif isinstance(lookup, IExact):
-                return (v or "").lower() == (rhs or "").lower()
+                return str(v or "").lower() == str(rhs or "").lower()
             elif isinstance(lookup, In):
                 return v in rhs
             elif isinstance(lookup, GreaterThanOrEqual):
@@ -629,25 +824,25 @@ class ZODBMixin:
                 lo, hi = rhs
                 return v is not None and lo <= v <= hi
             elif isinstance(lookup, IContains):
-                return (rhs or "").lower() in (v or "").lower()
+                return str(rhs or "").lower() in str(v if v is not None else "").lower()
             elif isinstance(lookup, Contains):
-                return rhs in (v or "")
+                return str(rhs) in str(v if v is not None else "")
             elif isinstance(lookup, IStartsWith):
-                return (v or "").lower().startswith((rhs or "").lower())
+                return str(v if v is not None else "").lower().startswith(str(rhs or "").lower())
             elif isinstance(lookup, StartsWith):
-                return (v or "").startswith(rhs or "")
+                return str(v if v is not None else "").startswith(str(rhs or ""))
             elif isinstance(lookup, IEndsWith):
-                return (v or "").lower().endswith((rhs or "").lower())
+                return str(v if v is not None else "").lower().endswith(str(rhs or "").lower())
             elif isinstance(lookup, EndsWith):
-                return (v or "").endswith(rhs or "")
+                return str(v if v is not None else "").endswith(str(rhs or ""))
             elif isinstance(lookup, IRegex):
                 import re
 
-                return bool(re.search(rhs, v or "", re.IGNORECASE))
+                return bool(re.search(rhs, str(v or ""), re.IGNORECASE))
             elif isinstance(lookup, Regex):
                 import re
 
-                return bool(re.search(rhs, v or ""))
+                return bool(re.search(rhs, str(v or "")))
             return True  # Unknown lookup — conservative pass-through.
 
         return any(matches_one(v) for v in values)
@@ -872,7 +1067,6 @@ class SQLCompiler(ZODBMixin, compiler.SQLCompiler):
         We compute each aggregate over the matching rows and return a single
         tuple, matching what SQLAggregateCompiler.execute_sql(SINGLE) returns.
         """
-        from django.db.models import Count
         from django.db.models.sql.constants import SINGLE
 
         btree = self._get_btree()
@@ -889,12 +1083,14 @@ class SQLCompiler(ZODBMixin, compiler.SQLCompiler):
             if self._row_matches_where(self._obj_to_dict(obj), where)
         ]
 
-        results = []
-        for ann in self.query.annotation_select.values():
-            if isinstance(ann, Count):
-                results.append(len(matching))
-            else:
-                results.append(None)
+        # Reuse SQLAggregateCompiler's annotation logic.
+        agg_compiler = self.connection.ops.compiler("SQLAggregateCompiler")(
+            self.query, self.connection, self.using
+        )
+        results = [
+            agg_compiler._compute_annotation(ann, matching)
+            for ann in self.query.annotation_select.values()
+        ]
 
         result_tuple = tuple(results)
         return result_tuple if result_type == SINGLE else [result_tuple]
@@ -954,10 +1150,14 @@ class SQLCompiler(ZODBMixin, compiler.SQLCompiler):
             rows = deduped
 
         if result_type == SINGLE:
-            return rows[0] if rows else None
+            result = rows[0] if rows else None
+            self._log_query("ZODB SELECT")
+            return result
         if result_type == CURSOR:
+            self._log_query("ZODB SELECT")
             return rows
         # MULTI: return as a list of chunks so results_iter() can unwrap them.
+        self._log_query("ZODB SELECT")
         return [rows]
 
     def has_results(self):
@@ -1037,6 +1237,7 @@ class SQLInsertCompiler(ZODBMixin, compiler.SQLInsertCompiler):
         if self.connection.autocommit:
             txn.commit()
 
+        self._log_query("ZODB INSERT")
         if returning_fields:
             # Django expects a list of (value,) tuples for RETURNING.
             return [(pk,) for pk in inserted_pks]
@@ -1064,6 +1265,7 @@ class SQLDeleteCompiler(ZODBMixin, compiler.SQLDeleteCompiler):
             del coll[pk]
         if self.connection.autocommit:
             txn.commit()
+        self._log_query("ZODB DELETE")
         return len(to_delete)
 
 
@@ -1094,6 +1296,7 @@ class SQLUpdateCompiler(ZODBMixin, compiler.SQLUpdateCompiler):
                 updated += 1
         if self.connection.autocommit:
             txn.commit()
+        self._log_query("ZODB UPDATE")
         return updated
 
 
@@ -1101,28 +1304,104 @@ class SQLAggregateCompiler(ZODBMixin, compiler.SQLAggregateCompiler):
     """Aggregate (COUNT, SUM, etc.) compiler for ZODB."""
 
     def execute_sql(self, result_type=compiler.SINGLE):
-        # For simple COUNT(*), delegate to the base compiler's get_count logic.
-        # Full aggregation support (SUM, AVG, etc.) is future work.
-        from django.db.models import Count
 
         if self.query.is_empty():
             return tuple(0 for _ in self.query.annotation_select)
 
-        coll = self._get_btree()
-        if coll is None:
-            return (0,)
-
-        where = self.query.where
-        matching = [
-            obj for obj in coll.values() if self._row_matches_where(self._obj_to_dict(obj), where)
-        ]
+        # For AggregateQuery (wraps a DISTINCT/subquery inner query), execute
+        # the inner query first, deduplicate by PK, then aggregate over results.
+        inner_query = getattr(self.query, "inner_query", None)
+        if inner_query is not None:
+            inner_compiler = inner_query.get_compiler(
+                using=self.connection.alias, connection=self.connection
+            )
+            inner_matching = inner_compiler._fetch_matching_rows()
+            # Deduplicate by PK to honour DISTINCT.
+            try:
+                pk_col = inner_query.get_meta().pk.column
+            except Exception:
+                pk_col = "id"
+            seen_pks = set()
+            matching = []
+            for row in inner_matching:
+                pk = row.get(pk_col)
+                if pk is None or pk not in seen_pks:
+                    if pk is not None:
+                        seen_pks.add(pk)
+                    matching.append(row)
+        else:
+            coll = self._get_btree()
+            if coll is None:
+                return (0,)
+            where = self.query.where
+            matching = [
+                self._obj_to_dict(obj)
+                for obj in coll.values()
+                if self._row_matches_where(self._obj_to_dict(obj), where)
+            ]
 
         results = []
         for _annotation_key, annotation in self.query.annotation_select.items():
-            if isinstance(annotation, Count):
-                results.append(len(matching))
-            else:
-                # Unsupported aggregate — return None.
-                results.append(None)
+            results.append(self._compute_annotation(annotation, matching))
 
+        self._log_query("ZODB AGGREGATE")
         return tuple(results) if results else (len(matching),)
+
+    def _compute_annotation(self, annotation, rows):
+        """Compute a single aggregate annotation over a list of row dicts."""
+        from django.db.models import Avg, Count, Max, Min, Sum
+
+        if isinstance(annotation, Count):
+            return len(rows)
+
+        # For Sum/Max/Min/Avg, find the source field and aggregate its values.
+        source_col = self._get_annotation_source_col(annotation)
+        if source_col is None:
+            return None
+
+        values = [row.get(source_col) for row in rows if row.get(source_col) is not None]
+
+        if not values:
+            return getattr(annotation, "empty_result_set_value", None)
+
+        if isinstance(annotation, Sum):
+            try:
+                return sum(values)
+            except TypeError:
+                return None
+        elif isinstance(annotation, Max):
+            try:
+                return max(values)
+            except TypeError:
+                return None
+        elif isinstance(annotation, Min):
+            try:
+                return min(values)
+            except TypeError:
+                return None
+        elif isinstance(annotation, Avg):
+            try:
+                return sum(values) / len(values)
+            except (TypeError, ZeroDivisionError):
+                return None
+        return None
+
+    def _get_annotation_source_col(self, annotation):
+        """Extract the column name from an aggregate's source expression."""
+        try:
+            source_exprs = annotation.get_source_expressions()
+            if source_exprs:
+                src = source_exprs[0]
+                # Direct Col reference.
+                col = getattr(getattr(src, "target", None), "column", None)
+                if col:
+                    return col
+                # Ref wrapping a Col.
+                inner = getattr(src, "refs", None)
+                if inner:
+                    src2 = getattr(src, "source", None) or src
+                    col = getattr(getattr(src2, "target", None), "column", None)
+                    return col
+        except Exception:
+            pass
+        return None
