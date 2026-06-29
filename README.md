@@ -41,7 +41,7 @@ DATABASES = {
         "ENGINE": "django_zodb_backend",
         "NAME": "mydb",
         "OPTIONS": {
-            "PATH": "var/mydb.fs",   # → FileStorage
+            "path": "var/mydb.fs",   # → FileStorage
         },
     }
 }
@@ -50,7 +50,7 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 ```
 
 Storage is selected automatically:
-- `OPTIONS["PATH"]` set → `FileStorage` (single-process, durable)
+- `OPTIONS["path"]` set → `FileStorage` (single-process, durable)
 - `HOST` set → ZEO `ClientStorage` (multi-process)
 - nothing set → `MappingStorage` (in-memory, tests/CI only)
 

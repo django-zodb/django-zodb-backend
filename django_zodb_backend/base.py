@@ -123,12 +123,12 @@ class DatabaseWrapper(BaseDatabaseWrapper):
 
     .. code-block:: python
 
-        # FileStorage — set OPTIONS["PATH"], leave HOST unset
+        # FileStorage — set OPTIONS["path"], leave HOST unset
         DATABASES = {
             "default": {
                 "ENGINE": "django_zodb_backend",
                 "NAME": "mydb",
-                "OPTIONS": {"PATH": "var/mydb.fs"},
+                "OPTIONS": {"path": "var/mydb.fs"},
             }
         }
 
@@ -267,7 +267,7 @@ class DatabaseWrapper(BaseDatabaseWrapper):
         For ZEO, the server address is resolved as follows:
         * ``HOST`` may be ``"hostname:port"`` (port embedded) or plain ``"hostname"``
         * ``PORT`` (top-level Django setting) is the fallback port (default 8001)
-        * ``OPTIONS["PATH"]`` overrides both with a Unix socket path
+        * ``OPTIONS["path"]`` overrides both with a Unix socket path
         """
         opts = conn_params["options"]
         host = conn_params["host"]
@@ -293,7 +293,7 @@ class DatabaseWrapper(BaseDatabaseWrapper):
                     "ZEO storage requires the 'ZEO' package: pip install ZEO"
                 ) from exc
 
-            if unix_path := opts.get("PATH"):
+            if unix_path := opts.get("path"):
                 addr = unix_path
             else:
                 # HOST may embed the port as "host:port"
@@ -310,7 +310,7 @@ class DatabaseWrapper(BaseDatabaseWrapper):
                 read_only=bool(opts.get("read_only", False)),
                 server_sync=bool(opts.get("server_sync", False)),
             )
-        elif path := opts.get("PATH"):
+        elif path := opts.get("path"):
             # FileStorage — single-process, append-log file.
             from ZODB.FileStorage import FileStorage
 

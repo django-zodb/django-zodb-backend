@@ -14,7 +14,7 @@ Overview
 The storage backend is selected automatically from the settings you provide — no
 explicit ``"storage"`` key is needed:
 
-* ``OPTIONS["PATH"]`` set, no ``HOST`` → ``FileStorage`` (single-process, durable)
+* ``OPTIONS["path"]`` set, no ``HOST`` → ``FileStorage`` (single-process, durable)
 * ``HOST`` set in ``DATABASES``       → ZEO ``ClientStorage`` (multi-process)
 * nothing set                         → ``MappingStorage`` (in-memory, tests/CI only)
 
@@ -33,7 +33,7 @@ Set ``PATH`` in ``OPTIONS`` and leave ``HOST`` unset:
            "ENGINE": "django_zodb_backend",
            "NAME": "site",
            "OPTIONS": {
-               "PATH": "var/site.fs",
+               "path": "var/site.fs",
            },
        }
    }
@@ -98,11 +98,11 @@ Django convention). The remaining ZEO-specific options go in ``OPTIONS``:
      - Description
    * - ``HOST``
      - ``localhost``
-     - ZEO server hostname, IP, or ``"host:port"``.  Ignored when ``OPTIONS["PATH"]`` is set.
+     - ZEO server hostname, IP, or ``"host:port"``.  Ignored when ``OPTIONS["path"]`` is set.
    * - ``PORT``
      - ``8001``
-     - ZEO server TCP port (**top-level**, not in OPTIONS).  Ignored when ``OPTIONS["PATH"]`` is set.  Takes precedence over a port embedded in ``HOST``.
-   * - ``OPTIONS["PATH"]``
+     - ZEO server TCP port (**top-level**, not in OPTIONS).  Ignored when ``OPTIONS["path"]`` is set.  Takes precedence over a port embedded in ``HOST``.
+   * - ``OPTIONS["path"]``
      - —
      - Unix socket path (overrides ``HOST``/``PORT``).
    * - ``OPTIONS["wait_timeout"]``
@@ -139,7 +139,7 @@ When all workers are on the same machine, Unix sockets are faster than TCP:
 .. code-block:: python
 
    "OPTIONS": {
-       "PATH": "/run/myapp/zeo.sock",
+       "path": "/run/myapp/zeo.sock",
    }
 
 .. code-block:: bash
@@ -196,7 +196,7 @@ MappingStorage (memory)
 =======================
 
 ``MappingStorage`` keeps the entire database in memory in the current process.
-No ``HOST`` and no ``OPTIONS["PATH"]`` → memory storage is selected automatically:
+No ``HOST`` and no ``OPTIONS["path"]`` → memory storage is selected automatically:
 
 .. code-block:: python
 
@@ -227,7 +227,7 @@ Operational guidance
 
 Choose storage by what settings you provide:
 
-``OPTIONS["PATH"]`` set, no ``HOST``
+``OPTIONS["path"]`` set, no ``HOST``
    FileStorage — normal development and single-node production.
 
 ``HOST`` set
