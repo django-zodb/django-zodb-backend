@@ -273,9 +273,8 @@ class DatabaseWrapper(BaseDatabaseWrapper):
         host = conn_params["host"]
         port = conn_params["port"]
 
-        if host or port:
+        if host:
             # ZEO — connects to a running ZEO server.
-            # Top-level settings:
             #   HOST          hostname or "hostname:port"; default localhost
             #   PORT          TCP port; default 8001
             # OPTIONS keys:

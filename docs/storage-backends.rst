@@ -14,9 +14,9 @@ Overview
 The storage backend is selected automatically from the settings you provide — no
 explicit ``"storage"`` key is needed:
 
-* ``OPTIONS["PATH"]`` set, no ``HOST``/``PORT`` → ``FileStorage`` (single-process, durable)
-* ``HOST`` or ``PORT`` set in ``DATABASES``   → ZEO ``ClientStorage`` (multi-process)
-* nothing set                                 → ``MappingStorage`` (in-memory, tests/CI only)
+* ``OPTIONS["PATH"]`` set, no ``HOST`` → ``FileStorage`` (single-process, durable)
+* ``HOST`` set in ``DATABASES``       → ZEO ``ClientStorage`` (multi-process)
+* nothing set                         → ``MappingStorage`` (in-memory, tests/CI only)
 
 FileStorage
 ===========
@@ -227,10 +227,10 @@ Operational guidance
 
 Choose storage by what settings you provide:
 
-``OPTIONS["PATH"]`` set, no ``HOST``/``PORT``
+``OPTIONS["PATH"]`` set, no ``HOST``
    FileStorage — normal development and single-node production.
 
-``HOST`` or ``PORT`` set
+``HOST`` set
    ZEO ClientStorage — multi-process production or staging environments.
 
 Neither set
