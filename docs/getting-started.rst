@@ -29,7 +29,9 @@ For local development of this repository:
 Minimal database configuration
 ==============================
 
-The backend is configured as a normal Django database engine:
+The backend is configured as a normal Django database engine. The standard
+production storage is ``file`` (a local ``.fs`` file) or ``zeo`` (a ZEO server
+for multi-process deployments):
 
 .. code-block:: python
 
@@ -38,12 +40,16 @@ The backend is configured as a normal Django database engine:
            "ENGINE": "django_zodb_backend",
            "NAME": "mydb",
            "OPTIONS": {
-               "storage": "memory",
+               "storage": "file",
+               "PATH": "var/mydb.fs",
            },
        }
    }
 
    DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+For tests and local experiments, ``"storage": "memory"`` runs entirely in
+process with no external service. See :doc:`testing` and :doc:`storage-backends`.
 
 Why ``BigAutoField`` matters
 ============================
@@ -125,20 +131,18 @@ real-deployment behaviour exactly. No ``MIGRATION_MODULES`` suppression is neede
 Quick storage choices
 =====================
 
-``django-zodb-backend`` is designed around several ZODB storage layers:
-
-``memory``
-   In-process ``MappingStorage``. Excellent for tests and local experiments.
+``django-zodb-backend`` supports three ZODB storage layers:
 
 ``file``
-   ``FileStorage`` backed by a ``.fs`` append-only file.
+   ``FileStorage`` backed by a ``.fs`` append-only file.  The normal choice
+   for single-node development and production.
 
 ``zeo``
    ``ClientStorage`` connected to a ZEO server for multi-process deployments.
 
-``relstorage``
-   A planned/targeted configuration for storing ZODB pickles inside PostgreSQL,
-   MySQL, or SQLite via RelStorage. See :doc:`storage-backends`.
+``memory``
+   In-process ``MappingStorage``.  Tests and local experimentation only —
+   data does not persist across process restarts.
 
 Why tests are convenient
 ========================

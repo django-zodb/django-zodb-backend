@@ -5,59 +5,23 @@ Storage backends
 ================
 
 ZODB separates the object database API from the physical storage layer. That makes
-``django-zodb-backend`` unusually flexible compared to a backend tied to a single server
-process.
+``django-zodb-backend`` unusually flexible compared with a backend tied to a single
+server process.
 
 Overview
 ========
 
-The project is designed around four storage modes exposed through ``DATABASES[...]["OPTIONS"]``:
+Three storage modes are exposed through ``DATABASES[...]["OPTIONS"]["storage"]``:
 
-* ``memory`` for ``MappingStorage``
-* ``file`` for ``FileStorage``
-* ``zeo`` for ``ClientStorage``
-* ``relstorage`` for RelStorage-backed deployments
-
-.. important::
-
-   The current prototype code path directly implements ``memory``, ``file``, and ``zeo``.
-   RelStorage is part of the intended configuration surface and optional dependency story,
-   but may require additional wiring as the backend matures.
-
-MappingStorage (``memory``)
-===========================
-
-``MappingStorage`` keeps the entire database in memory in the current process.
-
-.. code-block:: python
-
-   DATABASES = {
-       "default": {
-           "ENGINE": "django_zodb_backend",
-           "NAME": "devdb",
-           "OPTIONS": {
-               "storage": "memory",
-           },
-       }
-   }
-
-Use cases:
-
-* test runs,
-* CI,
-* local experimentation,
-* backend development.
-
-Why it matters
---------------
-
-This is one of the backend's biggest practical advantages. Tests can run with a fresh,
-disposable database and no external service. See :doc:`testing`.
+* ``file`` — ``FileStorage``, the normal durable choice
+* ``zeo`` — ``ClientStorage`` for multi-process deployments
+* ``memory`` — ``MappingStorage``, for tests and experiments only
 
 FileStorage (``file``)
 ======================
 
-``FileStorage`` writes ZODB data to a ``.fs`` append-log file.
+``FileStorage`` writes ZODB data to a ``.fs`` append-log file.  This is the
+standard choice for single-node development and production deployments.
 
 .. code-block:: python
 
@@ -74,22 +38,23 @@ FileStorage (``file``)
 
 Characteristics:
 
-* simple deployment,
+* simple deployment — one file, no separate process,
 * durable local persistence,
-* single-writer bias,
-* good fit for experiments and small single-process services.
+* single-writer bias (appropriate for single-process deployments),
+* good fit for experiments, small services, and development.
 
 .. warning::
 
-   ``FileStorage`` is not the answer for every concurrency problem. If multiple processes
-   need coordinated access, evaluate ZEO or another deployment architecture.
+   ``FileStorage`` is not the answer for every concurrency requirement.  If
+   multiple processes need coordinated write access, use ZEO.
 
 ZEO ClientStorage (``zeo``)
 ===========================
 
-ZEO adds a storage server in front of ZODB and allows multiple client processes to work
-with the same object database. This is the standard ZODB multi-process deployment pattern,
-directly analogous to running separate application workers against a shared database server.
+ZEO adds a storage server in front of ZODB and allows multiple client processes to
+work with the same object database.  This is the standard ZODB multi-process
+deployment pattern, directly analogous to running separate application workers against
+a shared database server.
 
 .. code-block:: python
 
@@ -117,10 +82,10 @@ All available ``OPTIONS`` keys for ZEO
      - Description
    * - ``HOST``
      - ``localhost``
-     - ZEO server hostname or IP. Ignored when ``PATH`` is set.
+     - ZEO server hostname or IP.  Ignored when ``PATH`` is set.
    * - ``PORT``
      - ``8001``
-     - ZEO server TCP port. Ignored when ``PATH`` is set.
+     - ZEO server TCP port.  Ignored when ``PATH`` is set.
    * - ``PATH``
      - —
      - Unix socket path (overrides ``HOST``/``PORT``).
@@ -172,7 +137,7 @@ When all workers are on the same machine, Unix sockets are faster than TCP:
 --------------------------------------------
 
 By default ZEO clients use their local object cache and may lag slightly behind
-the latest commit from another client. Setting ``server_sync: True`` makes the
+the latest commit from another client.  Setting ``server_sync: True`` makes the
 client call ``serverSync()`` before each read transaction, ensuring it always
 sees the most recently committed state:
 
@@ -187,7 +152,7 @@ sees the most recently committed state:
 
 .. note::
 
-   ``server_sync`` adds a round-trip to the ZEO server on every read. Use it
+   ``server_sync`` adds a round-trip to the ZEO server on every read.  Use it
    when read-your-own-writes guarantees are required across workers; leave it
    off otherwise.
 
@@ -210,55 +175,58 @@ The test suite includes a dedicated ``tests/test_zeo.py`` covering:
 * the Django ``DatabaseWrapper`` configured with ZEO storage.
 
 These tests use ``ZEO.server()`` to start an **in-process** ZEO server on a
-random port, so no external ``runzeo`` process is required for CI. See
+random port, so no external ``runzeo`` process is required for CI.  See
 :doc:`testing` for how the ZEO CI job is configured.
 
-RelStorage (``relstorage``)
+MappingStorage (``memory``)
 ===========================
 
-RelStorage stores ZODB pickles inside a relational database such as PostgreSQL, MySQL,
-or SQLite while preserving ZODB's object semantics.
+``MappingStorage`` keeps the entire database in memory in the current process.
 
 .. code-block:: python
 
    DATABASES = {
        "default": {
            "ENGINE": "django_zodb_backend",
-           "NAME": "site",
+           "NAME": "devdb",
            "OPTIONS": {
-               "storage": "relstorage",
-               "URL": "postgresql://user:pass@localhost/site",
+               "storage": "memory",
            },
        }
    }
 
-Important nuance
-----------------
+Use cases:
 
-RelStorage does **not** turn ``django-zodb-backend`` into a relational Django backend.
-The relational database is merely the persistence layer for ZODB objects. Query execution
-still follows the ZODB path described in :doc:`architecture`; it does not suddenly gain
-SQL query execution for Django ORM statements.
+* test runs,
+* CI,
+* local experimentation,
+* backend development.
+
+.. important::
+
+   Data does not survive process exit.  Do not use ``memory`` storage for
+   anything you want to keep.
+
+This is one of the backend's biggest practical advantages for testing.  Tests can
+run with a fresh, disposable database and no external service.  See :doc:`testing`.
 
 Operational guidance
 ====================
 
 Choose storage by lifecycle stage:
 
-``memory``
-   Best default for tests and proof-of-concept work.
-
 ``file``
-   Best simple durable option for single-node experiments.
+   Normal development and single-node production.
 
 ``zeo``
-   Best classic multi-process ZODB deployment path.
+   Multi-process production or staging environments.
 
-``relstorage``
-   Best when operational requirements favor a relational persistence substrate for ZODB.
+``memory``
+   Tests and CI only.
 
 Threading note
 ==============
 
-Regardless of storage backend, each thread should have its own ZODB connection opened
-from the shared ``ZODB.DB`` object. That rule remains the same across storage choices.
+Regardless of storage backend, each thread should have its own ZODB connection
+opened from the shared ``ZODB.DB`` object.  That rule remains the same across
+storage choices.

@@ -39,15 +39,18 @@ The Python scan *is* the execution model.
 DATABASES = {
     "default": {
         "ENGINE": "django_zodb_backend",
-        "NAME": "mydb",             # used as root key namespace
+        "NAME": "mydb",
         "OPTIONS": {
-            "storage": "memory",    # or "file", "zeo", "relstorage"
+            "storage": "file",
+            "PATH": "var/mydb.fs",
         },
     }
 }
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 ```
+
+For tests, use `"storage": "memory"` — no external service required.
 
 ## Documentation
 
