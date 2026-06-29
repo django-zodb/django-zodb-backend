@@ -138,7 +138,7 @@ class DatabaseWrapper(BaseDatabaseWrapper):
                 "ENGINE": "django_zodb_backend",
                 "NAME": "mydb",
                 "HOST": "127.0.0.1",
-                "PORT": "8001",
+                "PORT": "8001",      # or embed as HOST "127.0.0.1:8001"
             }
         }
 
@@ -239,9 +239,11 @@ class DatabaseWrapper(BaseDatabaseWrapper):
     def get_connection_params(self):
         opts = self.settings_dict.get("OPTIONS", {})
         host = self.settings_dict.get("HOST", "")
+        port = self.settings_dict.get("PORT", "")
         return {
             "name": self.settings_dict.get("NAME", "default"),
             "host": host,
+            "port": port,
             "options": opts,
         }
 
@@ -261,14 +263,22 @@ class DatabaseWrapper(BaseDatabaseWrapper):
         * ``HOST`` set in ``DATABASES``             → ZEO ClientStorage
         * ``PATH`` set in ``DATABASES["OPTIONS"]``  → FileStorage
         * nothing set                               → MappingStorage (memory, tests/CI only)
+
+        For ZEO, the server address is resolved as follows:
+        * ``HOST`` may be ``"hostname:port"`` (port embedded) or plain ``"hostname"``
+        * ``PORT`` (top-level Django setting) is the fallback port (default 8001)
+        * ``OPTIONS["PATH"]`` overrides both with a Unix socket path
         """
         opts = conn_params["options"]
         host = conn_params["host"]
+        port = conn_params["port"]
 
-        if host or opts.get("PORT"):
+        if host or port:
             # ZEO — connects to a running ZEO server.
+            # Top-level settings:
+            #   HOST          hostname or "hostname:port"; default localhost
+            #   PORT          TCP port; default 8001
             # OPTIONS keys:
-            #   PORT          TCP port (default: 8001)
             #   PATH          Unix socket path (overrides HOST/PORT when set)
             #   wait_timeout  seconds to wait for server (default: 30)
             #   read_only     open read-only connection (default: False)
@@ -287,8 +297,13 @@ class DatabaseWrapper(BaseDatabaseWrapper):
             if unix_path := opts.get("PATH"):
                 addr = unix_path
             else:
-                port = int(opts.get("PORT", 8001))
-                addr = (host or "localhost", port)
+                # HOST may embed the port as "host:port"
+                if host and ":" in host:
+                    host, embedded_port = host.rsplit(":", 1)
+                    resolved_port = int(port or embedded_port)
+                else:
+                    resolved_port = int(port or 8001)
+                addr = (host or "localhost", resolved_port)
 
             storage = zeo_client(
                 addr,

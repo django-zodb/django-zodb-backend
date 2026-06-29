@@ -58,7 +58,7 @@ work with the same object database.  This is the standard ZODB multi-process
 deployment pattern, directly analogous to running separate application workers against
 a shared database server.
 
-Set ``HOST`` (and optionally ``PORT``) in ``DATABASES``:
+Set ``HOST`` (and optionally ``PORT``) as top-level ``DATABASES`` settings:
 
 .. code-block:: python
 
@@ -68,6 +68,18 @@ Set ``HOST`` (and optionally ``PORT``) in ``DATABASES``:
            "NAME": "site",
            "HOST": "127.0.0.1",
            "PORT": "8001",
+       }
+   }
+
+You can also embed the port directly in ``HOST``:
+
+.. code-block:: python
+
+   DATABASES = {
+       "default": {
+           "ENGINE": "django_zodb_backend",
+           "NAME": "site",
+           "HOST": "127.0.0.1:8001",
        }
    }
 
@@ -86,10 +98,10 @@ Django convention). The remaining ZEO-specific options go in ``OPTIONS``:
      - Description
    * - ``HOST``
      - ``localhost``
-     - ZEO server hostname or IP (**top-level**, not in OPTIONS).  Ignored when ``OPTIONS["PATH"]`` is set.
+     - ZEO server hostname, IP, or ``"host:port"``.  Ignored when ``OPTIONS["PATH"]`` is set.
    * - ``PORT``
      - ``8001``
-     - ZEO server TCP port (**top-level**, not in OPTIONS).  Ignored when ``OPTIONS["PATH"]`` is set.
+     - ZEO server TCP port (**top-level**, not in OPTIONS).  Ignored when ``OPTIONS["PATH"]`` is set.  Overridden by port embedded in ``HOST``.
    * - ``OPTIONS["PATH"]``
      - —
      - Unix socket path (overrides ``HOST``/``PORT``).
@@ -147,6 +159,7 @@ sees the most recently committed state:
 .. code-block:: python
 
    "HOST": "127.0.0.1",
+   "PORT": "8001",
    "OPTIONS": {
        "server_sync": True,   # stronger consistency, one extra RPC per read
    }
