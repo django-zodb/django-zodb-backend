@@ -450,42 +450,50 @@ class ZODBMixin:
                 import datetime
 
                 if isinstance(field_val, (datetime.datetime, datetime.date)):
+                    is_dt = isinstance(field_val, datetime.datetime)
                     try:
                         if kind == "year":
+                            if is_dt:
+                                return field_val.replace(
+                                    month=1, day=1, hour=0, minute=0, second=0, microsecond=0
+                                )
                             return datetime.date(field_val.year, 1, 1)
                         elif kind == "month":
+                            if is_dt:
+                                return field_val.replace(
+                                    day=1, hour=0, minute=0, second=0, microsecond=0
+                                )
                             return datetime.date(field_val.year, field_val.month, 1)
                         elif kind == "week":
-                            d = (
-                                field_val.date()
-                                if isinstance(field_val, datetime.datetime)
-                                else field_val
-                            )
-                            return d - datetime.timedelta(days=d.weekday())
+                            d = field_val.date() if is_dt else field_val
+                            iso_monday = d - datetime.timedelta(days=d.weekday())
+                            if is_dt:
+                                return datetime.datetime.combine(iso_monday, datetime.time.min)
+                            return iso_monday
                         elif kind == "day":
                             return (
-                                field_val.date()
-                                if isinstance(field_val, datetime.datetime)
+                                field_val.replace(hour=0, minute=0, second=0, microsecond=0)
+                                if is_dt
                                 else field_val
                             )
                         elif kind == "hour":
                             dt = (
                                 field_val
-                                if isinstance(field_val, datetime.datetime)
+                                if is_dt
                                 else datetime.datetime.combine(field_val, datetime.time())
                             )
                             return dt.replace(minute=0, second=0, microsecond=0)
                         elif kind == "minute":
                             dt = (
                                 field_val
-                                if isinstance(field_val, datetime.datetime)
+                                if is_dt
                                 else datetime.datetime.combine(field_val, datetime.time())
                             )
                             return dt.replace(second=0, microsecond=0)
                         elif kind == "second":
                             dt = (
                                 field_val
-                                if isinstance(field_val, datetime.datetime)
+                                if is_dt
                                 else datetime.datetime.combine(field_val, datetime.time())
                             )
                             return dt.replace(microsecond=0)
