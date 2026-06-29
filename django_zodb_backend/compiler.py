@@ -49,6 +49,121 @@ class ZODBMixin:
         """Return the OOBTree for any table by name, or None if unavailable."""
         return self.connection.get_btree(table_name)
 
+    def _eval_exists(self, exists_expr, outer_row):
+        """
+        Evaluate an ``Exists(subquery)`` expression against the current outer
+        row.  Resolves ``OuterRef`` references using ``outer_row``, then
+        executes the inner query and returns True if it produces any rows.
+        """
+        try:
+            inner_query = exists_expr.query.clone()
+
+            # Resolve OuterRef placeholders by substituting values from outer_row.
+            from django.db.models.expressions import Col, OuterRef, ResolvedOuterRef, Value
+
+            inner_alias_set = set(getattr(inner_query, "alias_map", {}).keys())
+
+            def _get_outer_val(ref_name):
+                if ref_name == "pk":
+                    try:
+                        pk_col = self.query.get_meta().pk.column
+                        val = outer_row.get(pk_col)
+                        if val is not None:
+                            return val
+                    except Exception:
+                        pass
+                val = outer_row.get(ref_name)
+                if val is None:
+                    val = outer_row.get(ref_name + "_id")
+                if val is None:
+                    val = outer_row.get("id")
+                return val
+
+            def _is_outer_ref(obj):
+                """Return True if obj is a reference to the outer query."""
+                if isinstance(obj, (OuterRef, ResolvedOuterRef)):
+                    return True
+                # A Col whose alias is not in the inner query is an outer ref.
+                if isinstance(obj, Col) and obj.alias not in inner_alias_set:
+                    return True
+                return False
+
+            def _outer_ref_val(obj):
+                """Extract the outer-row value for an outer reference."""
+                if isinstance(obj, (OuterRef, ResolvedOuterRef)):
+                    return _get_outer_val(obj.name)
+                if isinstance(obj, Col):
+                    col_name = obj.target.column if obj.target else None
+                    if col_name:
+                        return outer_row.get(col_name)
+                return None
+
+            def _resolve_outer_refs(where_node):
+                if where_node is None:
+                    return
+                new_children = []
+                for child in list(where_node.children):
+                    if hasattr(child, "children"):
+                        _resolve_outer_refs(child)
+                        new_children.append(child)
+                    elif hasattr(child, "rhs") and _is_outer_ref(child.rhs):
+                        outer_val = _outer_ref_val(child.rhs)
+                        child = type(child)(child.lhs, Value(outer_val))
+                        new_children.append(child)
+                    else:
+                        new_children.append(child)
+                where_node.children = new_children
+
+            _resolve_outer_refs(inner_query.where)
+
+            sub_compiler = inner_query.get_compiler(
+                using=self.connection.alias, connection=self.connection
+            )
+            has_rows = sub_compiler.has_results()
+            return (not has_rows) if getattr(exists_expr, "negated", False) else has_rows
+        except Exception:
+            # Cannot evaluate — return True (conservative).
+            return True
+
+    def _eval_subquery_rhs(self, rhs, lookup):
+        """
+        Evaluate a subquery or QuerySet RHS against our ZODB backend.
+
+        Returns a list of scalar values (for In/RelatedIn lookups) or a single
+        value (for Exact lookups), or None if evaluation is not possible.
+
+        Handles the common case of ``filter(group__in=user.groups.all())``,
+        ``filter(pk__in=subqueryset)``, etc.
+        """
+        from django.db.models import QuerySet
+        from django.db.models.sql.query import Query
+
+        # Unwrap QuerySet to get the underlying Query.
+        if isinstance(rhs, QuerySet):
+            query = rhs.query
+        elif isinstance(rhs, Query):
+            query = rhs
+        else:
+            # Some other expression type — cannot evaluate.
+            return None
+
+        try:
+            # Build a compiler for the subquery using our connection.
+            sub_compiler = query.get_compiler(
+                using=self.connection.alias, connection=self.connection
+            )
+            # Execute: returns an iterable of row tuples.
+            results = sub_compiler.execute_sql(result_type="multi")
+            values = []
+            if results:
+                for batch in results:
+                    for row in batch:
+                        if row:
+                            values.append(row[0])
+            return values
+        except Exception:
+            return None
+
     def _resolve_joined_col(self, row, target_alias, col_name):
         """
         Resolve a column that lives in a JOINed table rather than the main
@@ -84,6 +199,13 @@ class ZODBMixin:
         # Walk the path, expanding each join.
         current_rows = [row]
         for join in path:
+            if not hasattr(join, "join_cols"):
+                # BaseTable entry — this occurs when pre_sql_setup() assigns
+                # numbered aliases (U0, U1, …) and the base table's alias does
+                # not match get_meta().db_table. The BaseTable represents the
+                # starting table and requires no scanning; continue with the
+                # current rows and let the next real Join expand them.
+                continue
             rhs_btree = self._get_btree_for_table(join.table_name)
             if rhs_btree is None:
                 return []
@@ -124,11 +246,16 @@ class ZODBMixin:
         for child in where_node.children:
             if isinstance(child, NothingNode):
                 result = False
-            elif hasattr(child, "children"):
-                # Nested WhereNode.
-                result = self._row_matches_where(obj_dict, child)
             else:
-                result = self._eval_lookup(obj_dict, child)
+                from django.db.models.expressions import Exists
+
+                if isinstance(child, Exists):
+                    result = self._eval_exists(child, obj_dict)
+                elif hasattr(child, "children"):
+                    # Nested WhereNode.
+                    result = self._row_matches_where(obj_dict, child)
+                else:
+                    result = self._eval_lookup(obj_dict, child)
             results.append(result)
 
         if connector == AND:
@@ -272,6 +399,17 @@ class ZODBMixin:
 
         # Resolve the LHS column name and the source Col expression.
         lhs = lookup.lhs
+        # Handle Exists(subquery) wrapped as Exact(Exists(...), True).
+        from django.db.models.expressions import Exists as ExistsExpr
+
+        if isinstance(lhs, ExistsExpr):
+            exists_result = self._eval_exists(lhs, obj_dict)
+            # The rhs is the expected boolean (True means "exists", False means "not exists").
+            expected = lookup.rhs
+            if isinstance(expected, Value):
+                expected = expected.value
+            return exists_result == expected
+
         col_obj = None  # The Col expression (for join resolution)
         col_table_alias = None  # The table alias the column belongs to
         if hasattr(lhs, "output_field"):
@@ -334,8 +472,11 @@ class ZODBMixin:
         if isinstance(rhs, Value):
             rhs = rhs.value
         elif hasattr(rhs, "resolve_expression"):
-            # Subquery or expression — not supported in this POC.
-            return True
+            # Subquery or QuerySet — try to evaluate it against our ZODB backend.
+            rhs = self._eval_subquery_rhs(rhs, lookup)
+            if rhs is None:
+                # Could not evaluate — treat as matching (conservative).
+                return True
 
         # Convert the RHS to the DB storage representation so it matches the
         # values written by our INSERT compiler (which uses get_db_prep_save).
