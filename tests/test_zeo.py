@@ -191,12 +191,9 @@ class TestDjangoBackendWithZEO:
                     "default": {
                         "ENGINE": "django_zodb_backend",
                         "NAME": "zeo_test",
-                        "OPTIONS": {
-                            "storage": "zeo",
-                            "HOST": addr[0],
-                            "PORT": addr[1],
-                            "wait_timeout": 10,
-                        },
+                        "HOST": addr[0],
+                        "PORT": str(addr[1]),
+                        "OPTIONS": {"wait_timeout": 10},
                     }
                 },
                 DEFAULT_AUTO_FIELD="django.db.models.BigAutoField",
@@ -210,16 +207,11 @@ class TestDjangoBackendWithZEO:
         settings_dict = {
             "ENGINE": "django_zodb_backend",
             "NAME": "zeo_test",
-            "OPTIONS": {
-                "storage": "zeo",
-                "HOST": addr[0],
-                "PORT": addr[1],
-                "wait_timeout": 10,
-            },
+            "HOST": addr[0],
+            "PORT": str(addr[1]),
+            "OPTIONS": {"wait_timeout": 10},
             "USER": "",
             "PASSWORD": "",
-            "HOST": "",
-            "PORT": "",
             "TIME_ZONE": None,
             "CONN_MAX_AGE": 0,
             "CONN_HEALTH_CHECKS": False,
