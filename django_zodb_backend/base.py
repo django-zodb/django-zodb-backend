@@ -119,20 +119,34 @@ class DatabaseWrapper(BaseDatabaseWrapper):
     """
     Django database backend for ZODB.
 
-    Storage configuration is specified via ``DATABASES[alias]["OPTIONS"]``:
+    Storage is selected automatically from the settings provided:
 
     .. code-block:: python
 
+        # FileStorage — set OPTIONS["PATH"], leave HOST unset
         DATABASES = {
             "default": {
                 "ENGINE": "django_zodb_backend",
                 "NAME": "mydb",
-                "OPTIONS": {
-                    # "memory"    — in-process MappingStorage (default / tests)
-                    # "file"      — FileStorage; requires "PATH" in OPTIONS
-                    # "zeo"       — ZEO ClientStorage; requires "HOST"/"PORT"
-                    "storage": "memory",
-                },
+                "OPTIONS": {"PATH": "var/mydb.fs"},
+            }
+        }
+
+        # ZEO ClientStorage — set HOST (and optionally PORT)
+        DATABASES = {
+            "default": {
+                "ENGINE": "django_zodb_backend",
+                "NAME": "mydb",
+                "HOST": "127.0.0.1",
+                "PORT": "8001",
+            }
+        }
+
+        # MappingStorage (in-memory, tests/CI) — set nothing
+        DATABASES = {
+            "default": {
+                "ENGINE": "django_zodb_backend",
+                "NAME": "mydb",
             }
         }
     """
@@ -224,9 +238,10 @@ class DatabaseWrapper(BaseDatabaseWrapper):
 
     def get_connection_params(self):
         opts = self.settings_dict.get("OPTIONS", {})
+        host = self.settings_dict.get("HOST", "")
         return {
-            "storage_type": opts.get("storage", "memory"),
             "name": self.settings_dict.get("NAME", "default"),
+            "host": host,
             "options": opts,
         }
 
@@ -239,23 +254,20 @@ class DatabaseWrapper(BaseDatabaseWrapper):
         return _db_pool[alias]
 
     def _make_db(self, conn_params):
-        """Construct a ZODB.DB from connection params."""
-        storage_type = conn_params["storage_type"]
+        """Construct a ZODB.DB from connection params.
+
+        Storage is selected automatically from the settings provided:
+
+        * ``HOST`` set in ``DATABASES``             → ZEO ClientStorage
+        * ``PATH`` set in ``DATABASES["OPTIONS"]``  → FileStorage
+        * nothing set                               → MappingStorage (memory, tests/CI only)
+        """
         opts = conn_params["options"]
+        host = conn_params["host"]
 
-        if storage_type == "memory":
-            storage = ZODB.MappingStorage.MappingStorage()
-        elif storage_type == "file":
-            from ZODB.FileStorage import FileStorage
-
-            path = opts.get("PATH") or (conn_params["name"] + ".fs")
-            storage = FileStorage(path)
-        elif storage_type == "zeo":
-            # ZEO ClientStorage — connects to a running ZEO server.
-            # Supports both (host, port) TCP and Unix socket (path) addresses.
-            #
+        if host or opts.get("PORT"):
+            # ZEO — connects to a running ZEO server.
             # OPTIONS keys:
-            #   HOST          hostname or IP (default: localhost)
             #   PORT          TCP port (default: 8001)
             #   PATH          Unix socket path (overrides HOST/PORT when set)
             #   wait_timeout  seconds to wait for server (default: 30)
@@ -265,9 +277,6 @@ class DatabaseWrapper(BaseDatabaseWrapper):
             #
             # For production, run the ZEO server with:
             #   runzeo -a localhost:8001 -f /var/lib/myapp/data.fs
-            #
-            # For testing, use ZEO.server() to start an in-process server:
-            #   addr, stop = ZEO.server(path="/tmp/test.fs")
             try:
                 from ZEO import client as zeo_client
             except ImportError as exc:
@@ -278,9 +287,8 @@ class DatabaseWrapper(BaseDatabaseWrapper):
             if unix_path := opts.get("PATH"):
                 addr = unix_path
             else:
-                host = opts.get("HOST", "localhost")
                 port = int(opts.get("PORT", 8001))
-                addr = (host, port)
+                addr = (host or "localhost", port)
 
             storage = zeo_client(
                 addr,
@@ -288,8 +296,14 @@ class DatabaseWrapper(BaseDatabaseWrapper):
                 read_only=bool(opts.get("read_only", False)),
                 server_sync=bool(opts.get("server_sync", False)),
             )
+        elif path := opts.get("PATH"):
+            # FileStorage — single-process, append-log file.
+            from ZODB.FileStorage import FileStorage
+
+            storage = FileStorage(path)
         else:
-            raise ValueError(f"Unknown ZODB storage type: {storage_type!r}")
+            # MappingStorage — in-memory, tests and CI only.
+            storage = ZODB.MappingStorage.MappingStorage()
 
         return ZODB.DB(storage)
 

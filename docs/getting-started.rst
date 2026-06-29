@@ -29,9 +29,10 @@ For local development of this repository:
 Minimal database configuration
 ==============================
 
-The backend is configured as a normal Django database engine. The standard
-production storage is ``file`` (a local ``.fs`` file) or ``zeo`` (a ZEO server
-for multi-process deployments):
+The backend is configured as a normal Django database engine.  The storage backend
+is selected automatically from the settings you provide — no ``"storage"`` key needed.
+
+For durable single-process deployments, set ``OPTIONS["PATH"]``:
 
 .. code-block:: python
 
@@ -40,7 +41,6 @@ for multi-process deployments):
            "ENGINE": "django_zodb_backend",
            "NAME": "mydb",
            "OPTIONS": {
-               "storage": "file",
                "PATH": "var/mydb.fs",
            },
        }
@@ -48,8 +48,9 @@ for multi-process deployments):
 
    DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-For tests and local experiments, ``"storage": "memory"`` runs entirely in
-process with no external service. See :doc:`testing` and :doc:`storage-backends`.
+For tests and local experiments, leave both ``HOST`` and ``OPTIONS["PATH"]`` unset —
+the backend uses in-process memory storage automatically.  See :doc:`testing` and
+:doc:`storage-backends`.
 
 Why ``BigAutoField`` matters
 ============================
@@ -131,16 +132,17 @@ real-deployment behaviour exactly. No ``MIGRATION_MODULES`` suppression is neede
 Quick storage choices
 =====================
 
-``django-zodb-backend`` supports three ZODB storage layers:
+``django-zodb-backend`` supports three ZODB storage layers, selected automatically
+from your settings — no ``"storage"`` key needed:
 
-``file``
+``OPTIONS["PATH"]`` set, no ``HOST``
    ``FileStorage`` backed by a ``.fs`` append-only file.  The normal choice
    for single-node development and production.
 
-``zeo``
+``HOST`` set
    ``ClientStorage`` connected to a ZEO server for multi-process deployments.
 
-``memory``
+Neither set
    In-process ``MappingStorage``.  Tests and local experimentation only —
    data does not persist across process restarts.
 

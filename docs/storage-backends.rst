@@ -11,17 +11,20 @@ server process.
 Overview
 ========
 
-Three storage modes are exposed through ``DATABASES[...]["OPTIONS"]["storage"]``:
+The storage backend is selected automatically from the settings you provide — no
+explicit ``"storage"`` key is needed:
 
-* ``file`` — ``FileStorage``, the normal durable choice
-* ``zeo`` — ``ClientStorage`` for multi-process deployments
-* ``memory`` — ``MappingStorage``, for tests and experiments only
+* ``PATH`` in ``OPTIONS``           → ``FileStorage`` (single-process, durable)
+* ``HOST`` set in ``DATABASES``     → ZEO ``ClientStorage`` (multi-process)
+* nothing set                       → ``MappingStorage`` (in-memory, tests/CI only)
 
-FileStorage (``file``)
-======================
+FileStorage
+===========
 
 ``FileStorage`` writes ZODB data to a ``.fs`` append-log file.  This is the
 standard choice for single-node development and production deployments.
+
+Set ``PATH`` in ``OPTIONS`` and leave ``HOST`` unset:
 
 .. code-block:: python
 
@@ -30,7 +33,6 @@ standard choice for single-node development and production deployments.
            "ENGINE": "django_zodb_backend",
            "NAME": "site",
            "OPTIONS": {
-               "storage": "file",
                "PATH": "var/site.fs",
            },
        }
@@ -48,13 +50,15 @@ Characteristics:
    ``FileStorage`` is not the answer for every concurrency requirement.  If
    multiple processes need coordinated write access, use ZEO.
 
-ZEO ClientStorage (``zeo``)
-===========================
+ZEO ClientStorage
+=================
 
 ZEO adds a storage server in front of ZODB and allows multiple client processes to
 work with the same object database.  This is the standard ZODB multi-process
 deployment pattern, directly analogous to running separate application workers against
 a shared database server.
+
+Set ``HOST`` (and optionally ``PORT``) in ``DATABASES``:
 
 .. code-block:: python
 
@@ -62,40 +66,40 @@ a shared database server.
        "default": {
            "ENGINE": "django_zodb_backend",
            "NAME": "site",
-           "OPTIONS": {
-               "storage": "zeo",
-               "HOST": "127.0.0.1",
-               "PORT": 8001,
-           },
+           "HOST": "127.0.0.1",
+           "PORT": "8001",
        }
    }
 
-All available ``OPTIONS`` keys for ZEO
----------------------------------------
+All available settings for ZEO
+-------------------------------
+
+``HOST`` and ``PORT`` live at the top level of the ``DATABASES`` entry (standard
+Django convention). The remaining ZEO-specific options go in ``OPTIONS``:
 
 .. list-table::
    :header-rows: 1
    :widths: 20 15 65
 
-   * - Key
+   * - Setting
      - Default
      - Description
    * - ``HOST``
      - ``localhost``
-     - ZEO server hostname or IP.  Ignored when ``PATH`` is set.
+     - ZEO server hostname or IP (**top-level**, not in OPTIONS).  Ignored when ``OPTIONS["PATH"]`` is set.
    * - ``PORT``
      - ``8001``
-     - ZEO server TCP port.  Ignored when ``PATH`` is set.
-   * - ``PATH``
+     - ZEO server TCP port (**top-level**, not in OPTIONS).  Ignored when ``OPTIONS["PATH"]`` is set.
+   * - ``OPTIONS["PATH"]``
      - —
      - Unix socket path (overrides ``HOST``/``PORT``).
-   * - ``wait_timeout``
+   * - ``OPTIONS["wait_timeout"]``
      - ``30``
      - Seconds to wait for the ZEO server to become available on connect.
-   * - ``read_only``
+   * - ``OPTIONS["read_only"]``
      - ``False``
      - Open a read-only connection (cannot commit).
-   * - ``server_sync``
+   * - ``OPTIONS["server_sync"]``
      - ``False``
      - Call ``serverSync()`` before each read; see :ref:`server_sync` below.
 
@@ -123,7 +127,6 @@ When all workers are on the same machine, Unix sockets are faster than TCP:
 .. code-block:: python
 
    "OPTIONS": {
-       "storage": "zeo",
        "PATH": "/run/myapp/zeo.sock",
    }
 
@@ -143,10 +146,8 @@ sees the most recently committed state:
 
 .. code-block:: python
 
+   "HOST": "127.0.0.1",
    "OPTIONS": {
-       "storage": "zeo",
-       "HOST": "127.0.0.1",
-       "PORT": 8001,
        "server_sync": True,   # stronger consistency, one extra RPC per read
    }
 
@@ -156,7 +157,7 @@ sees the most recently committed state:
    when read-your-own-writes guarantees are required across workers; leave it
    off otherwise.
 
-Use ``zeo`` when:
+Use ZEO when:
 
 * multiple Django worker processes (Gunicorn, uWSGI, etc.) must share one store,
 * you want the classic ZODB networked deployment model,
@@ -178,10 +179,11 @@ These tests use ``ZEO.server()`` to start an **in-process** ZEO server on a
 random port, so no external ``runzeo`` process is required for CI.  See
 :doc:`testing` for how the ZEO CI job is configured.
 
-MappingStorage (``memory``)
-===========================
+MappingStorage (memory)
+=======================
 
 ``MappingStorage`` keeps the entire database in memory in the current process.
+No ``HOST`` and no ``OPTIONS["PATH"]`` → memory storage is selected automatically:
 
 .. code-block:: python
 
@@ -189,9 +191,6 @@ MappingStorage (``memory``)
        "default": {
            "ENGINE": "django_zodb_backend",
            "NAME": "devdb",
-           "OPTIONS": {
-               "storage": "memory",
-           },
        }
    }
 
@@ -204,7 +203,7 @@ Use cases:
 
 .. important::
 
-   Data does not survive process exit.  Do not use ``memory`` storage for
+   Data does not survive process exit.  Do not use memory storage for
    anything you want to keep.
 
 This is one of the backend's biggest practical advantages for testing.  Tests can
@@ -213,16 +212,16 @@ run with a fresh, disposable database and no external service.  See :doc:`testin
 Operational guidance
 ====================
 
-Choose storage by lifecycle stage:
+Choose storage by what settings you provide:
 
-``file``
-   Normal development and single-node production.
+``OPTIONS["PATH"]`` set, no ``HOST``
+   FileStorage — normal development and single-node production.
 
-``zeo``
-   Multi-process production or staging environments.
+``HOST`` set
+   ZEO ClientStorage — multi-process production or staging environments.
 
-``memory``
-   Tests and CI only.
+Neither set
+   MappingStorage — tests and CI only.
 
 Threading note
 ==============
