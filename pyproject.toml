@@ -1,10 +1,10 @@
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "django-zodb-backend"
-version = "0.1.0.dev0"
+dynamic = ["version"]
 description = "Django ZODB Backend"
 readme = "README.md"
 license = {file = "LICENSE"}
@@ -40,9 +40,6 @@ filestorage = [
 zeo = [
     "ZEO>=5.0",
 ]
-relstorage = [
-    "RelStorage>=4.0",
-]
 docs = [
     "sphinx>=7",
     "furo",
@@ -60,8 +57,20 @@ Documentation = "https://django-zodb-backend.readthedocs.io"
 Source = "https://github.com/django-zodb/django-zodb-backend"
 Tracker = "https://github.com/django-zodb/django-zodb-backend/issues"
 
-[tool.hatch.version]
-path = "django_zodb_backend/__init__.py"
+[tool.setuptools.dynamic]
+version = {attr = "django_zodb_backend.__version__"}
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["django_zodb_backend*"]
+
+[tool.uv]
+dev-dependencies = [
+    "ruff",
+    "pytest",
+    "pytest-timeout",
+    "pre-commit",
+]
 
 [tool.ruff]
 line-length = 100

@@ -50,14 +50,11 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Cache pip
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: pip-${{ matrix.python-version }}-${{ hashFiles('pyproject.toml') }}
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
 
       - name: Install django-zodb-backend
-        run: pip install -e .
+        run: uv pip install -e . --system
 
       - name: Checkout Django (django-zodb fork)
         uses: actions/checkout@v4
@@ -72,8 +69,8 @@ jobs:
           sudo apt-get update -q
           sudo apt-get install -y libmemcached-dev
           cd django_repo/tests/
-          pip install -e ..
-          pip install -r requirements/py3.txt
+          uv pip install -e .. --system
+          uv pip install -r requirements/py3.txt --system
 
       - name: Copy test settings and runner
         run: |
@@ -118,7 +115,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-      - run: pip install ruff
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+      - run: uv pip install ruff --system
       - run: ruff check django_zodb_backend/
     permissions:
       contents: read
@@ -144,17 +143,14 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Cache pip
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: pip-zeo-${{ matrix.python-version }}-${{ hashFiles('pyproject.toml') }}
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
 
       - name: Install django-zodb-backend with ZEO extras
-        run: pip install -e ".[zeo]"
+        run: uv pip install -e ".[zeo]" --system
 
       - name: Install pytest
-        run: pip install pytest pytest-timeout
+        run: uv pip install pytest pytest-timeout --system
 
       - name: Run ZEO tests
         run: python -m pytest tests/test_zeo.py -v --timeout=300

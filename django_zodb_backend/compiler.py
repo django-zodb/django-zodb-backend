@@ -496,6 +496,47 @@ class ZODBMixin:
         if isinstance(expr, Value):
             return expr.value
 
+        # Extract expression (used by pubdate__month, pubdate__year lookups etc.)
+        # Unlike Trunc (which returns a truncated date), Extract returns an integer
+        # component: ExtractYear → int year, ExtractMonth → int month, etc.
+        from django.db.models.functions import Extract
+
+        if isinstance(expr, Extract):
+            sources = expr.get_source_expressions()
+            if sources:
+                field_val = self._eval_select_expr(sources[0], row_dict)
+                if field_val is None:
+                    return None
+                import datetime
+
+                kind = expr.lookup_name  # "year", "month", "day", "hour", etc.
+                try:
+                    if kind == "year":
+                        return field_val.year
+                    elif kind == "iso_year":
+                        return field_val.isocalendar()[0]
+                    elif kind == "month":
+                        return field_val.month
+                    elif kind == "day":
+                        return field_val.day
+                    elif kind == "week_day":
+                        # Django week_day: Sunday=1 … Saturday=7
+                        return (field_val.weekday() + 2) % 7 or 7
+                    elif kind == "iso_week_day":
+                        return field_val.isoweekday()
+                    elif kind == "week":
+                        return field_val.isocalendar()[1]
+                    elif kind == "quarter":
+                        return (field_val.month - 1) // 3 + 1
+                    elif kind == "hour" and isinstance(field_val, datetime.datetime):
+                        return field_val.hour
+                    elif kind == "minute" and isinstance(field_val, datetime.datetime):
+                        return field_val.minute
+                    elif kind == "second" and isinstance(field_val, datetime.datetime):
+                        return field_val.second
+                except (AttributeError, ValueError):
+                    return None
+
         # Ref: reference to a query alias/annotation. Evaluate the source.
         from django.db.models.expressions import Ref
 
@@ -593,6 +634,7 @@ class ZODBMixin:
 
         col_obj = None  # The Col expression (for join resolution)
         col_table_alias = None  # The table alias the column belongs to
+        _lhs_transform = None  # Set when lhs is a transform wrapping a Col
         if hasattr(lhs, "output_field"):
             # Col or transform
             target = getattr(lhs, "target", None)
@@ -614,6 +656,9 @@ class ZODBMixin:
                         col_name = getattr(getattr(sources[0], "target", None), "column", None)
                 col_obj = inner if isinstance(inner, Col) else None
                 col_table_alias = getattr(col_obj, "alias", None) if col_obj else None
+                # Remember that the original lhs is a transform — after we
+                # resolve obj_value we must apply the transform.
+                _lhs_transform = lhs if (lhs is not col_obj) else None
             else:
                 # Could be an annotation expression (F, Trunc, Cast, Ref, etc.)
                 # with source_expressions.  Try evaluating it directly.
@@ -653,6 +698,24 @@ class ZODBMixin:
                 obj_value = joined_values[0] if joined_values else None
             else:
                 obj_value = obj_dict.get(col_name)
+                # If lhs was a transform (e.g. ExtractMonth, Cast), apply it
+                # so the comparison gets the transformed value (e.g. integer 10
+                # for a month lookup).  Skip this for Year* lookups — those
+                # already extract the year component from the raw date value.
+                if _lhs_transform is not None:
+                    try:
+                        from django.db.models.lookups import (
+                            YearExact,
+                            YearGte,
+                            YearLt,
+                            YearLte,
+                        )
+
+                        _year_lookups = (YearExact, YearGte, YearLt, YearLte)
+                    except ImportError:
+                        _year_lookups = ()
+                    if not isinstance(lookup, _year_lookups):
+                        obj_value = self._eval_select_expr(_lhs_transform, obj_dict)
 
         # Resolve the RHS value.
         rhs = lookup.rhs
@@ -896,22 +959,33 @@ class ZODBMixin:
 
     def _parse_order_by(self):
         """Extract (column_name, is_descending, nulls_first) triples from the query."""
-        from django.db.models.expressions import OrderBy
+        from django.db.models.expressions import OrderBy, Ref
 
         order_by = []
         for expr, (_sql, _params, _is_ref) in self.get_order_by():
             if isinstance(expr, OrderBy):
                 source = expr.expression
+                # Unwrap Ref/PositionRef (used by dates() ORDER BY position)
+                while isinstance(source, Ref):
+                    source = source.source
                 col_name = getattr(getattr(source, "target", None), "column", None)
+                # For Trunc/Extract/transforms, drill into .lhs chain
+                if col_name is None:
+                    inner = source
+                    while inner is not None and col_name is None:
+                        col_name = getattr(getattr(inner, "target", None), "column", None)
+                        inner = getattr(inner, "lhs", None)
+                # Try source_expressions (Func-style)
+                if col_name is None:
+                    sources = getattr(source, "source_expressions", None) or []
+                    if sources:
+                        col_name = getattr(getattr(sources[0], "target", None), "column", None)
                 if col_name:
-                    # Determine effective nulls placement:
-                    # explicit nulls_first/nulls_last override SQL defaults.
                     if expr.nulls_first:
                         nulls_first = True
                     elif expr.nulls_last:
                         nulls_first = False
                     else:
-                        # SQL default: nulls last for ASC, nulls first for DESC.
                         nulls_first = expr.descending
                     order_by.append((col_name, expr.descending, nulls_first))
         return order_by
@@ -1040,7 +1114,7 @@ class SQLCompiler(ZODBMixin, compiler.SQLCompiler):
         chunk_size=2000,
     ):
         """
-        Yield result rows as tuples.
+        Yield result rows as tuples, with field converters applied.
 
         When called by ModelIterable, ``results`` is the value returned by
         execute_sql() — a list of row-tuple chunks.  When called standalone
@@ -1048,14 +1122,26 @@ class SQLCompiler(ZODBMixin, compiler.SQLCompiler):
         """
         if results is not None:
             # Unwrap the chunks returned by execute_sql(MULTI).
-            for chunk in results:
-                yield from chunk
-            return
+            rows = [row for chunk in results for row in chunk]
+        else:
+            # Standalone call: fetch fresh from ZODB.
+            self._setup_klass_info()
+            rows = [self._build_row_tuple(row) for row in self._fetch_matching_rows()]
 
-        # Standalone call: fetch fresh from ZODB.
-        self._setup_klass_info()
-        for row in self._fetch_matching_rows():
-            yield self._build_row_tuple(row)
+        # Apply field converters (e.g. UUIDField hex→uuid.UUID, DateField
+        # string→date) so model instances get the correct Python types.
+        try:
+            expressions = (
+                [entry[0] for entry in self.select] if getattr(self, "select", None) else []
+            )
+            converters = self.get_converters(expressions)
+        except Exception:
+            converters = {}
+
+        if converters:
+            yield from self.apply_converters(rows, converters)
+        else:
+            yield from rows
 
     def _compute_aggregates(self, result_type):
         """
@@ -1240,7 +1326,18 @@ class SQLInsertCompiler(ZODBMixin, compiler.SQLInsertCompiler):
         self._log_query("ZODB INSERT")
         if returning_fields:
             # Django expects a list of (value,) tuples for RETURNING.
-            return [(pk,) for pk in inserted_pks]
+            # Apply field db converters so callers get the correct Python type
+            # (e.g. uuid.UUID for UUIDField, not the raw hex string).
+            rows = []
+            for pk in inserted_pks:
+                converted = []
+                for field in returning_fields:
+                    value = pk
+                    for converter in field.get_db_converters(self.connection):
+                        value = converter(value, None, self.connection)
+                    converted.append(value)
+                rows.append(tuple(converted))
+            return rows
         return []
 
 
