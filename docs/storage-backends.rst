@@ -14,9 +14,9 @@ Overview
 The storage backend is selected automatically from the settings you provide — no
 explicit ``"storage"`` key is needed:
 
-* ``PATH`` in ``OPTIONS``           → ``FileStorage`` (single-process, durable)
-* ``HOST`` set in ``DATABASES``     → ZEO ``ClientStorage`` (multi-process)
-* nothing set                       → ``MappingStorage`` (in-memory, tests/CI only)
+* ``OPTIONS["PATH"]`` set, no ``HOST``/``PORT`` → ``FileStorage`` (single-process, durable)
+* ``HOST`` or ``PORT`` set in ``DATABASES``   → ZEO ``ClientStorage`` (multi-process)
+* nothing set                                 → ``MappingStorage`` (in-memory, tests/CI only)
 
 FileStorage
 ===========
@@ -101,7 +101,7 @@ Django convention). The remaining ZEO-specific options go in ``OPTIONS``:
      - ZEO server hostname, IP, or ``"host:port"``.  Ignored when ``OPTIONS["PATH"]`` is set.
    * - ``PORT``
      - ``8001``
-     - ZEO server TCP port (**top-level**, not in OPTIONS).  Ignored when ``OPTIONS["PATH"]`` is set.  Overridden by port embedded in ``HOST``.
+     - ZEO server TCP port (**top-level**, not in OPTIONS).  Ignored when ``OPTIONS["PATH"]`` is set.  Takes precedence over a port embedded in ``HOST``.
    * - ``OPTIONS["PATH"]``
      - —
      - Unix socket path (overrides ``HOST``/``PORT``).
@@ -227,10 +227,10 @@ Operational guidance
 
 Choose storage by what settings you provide:
 
-``OPTIONS["PATH"]`` set, no ``HOST``
+``OPTIONS["PATH"]`` set, no ``HOST``/``PORT``
    FileStorage — normal development and single-node production.
 
-``HOST`` set
+``HOST`` or ``PORT`` set
    ZEO ClientStorage — multi-process production or staging environments.
 
 Neither set
